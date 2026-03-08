@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+
+{% block title %}SailTracker — Passage Lite{% endblock %}
+
+{% block nav_lite %}active{% endblock %}
+
+{% block head_styles %}
+<style>
+body { padding: 0; }
+.lite-content {
+  font-family: monospace; font-size: 14px;
+  background: var(--bg-primary); color: var(--text-primary);
+  padding: 16px; max-width: 740px; margin: 0 auto;
+}
+h1 { font-size: 1rem; color: var(--accent-wind); margin-bottom: 4px; }
+.meta { color: var(--text-muted); font-size: 0.8rem; margin-bottom: 16px; }
+h2 { font-size: 0.85rem; color: var(--accent-info); margin: 14px 0 6px; text-transform: uppercase; letter-spacing: .08em; }
+.best-box {
+  background: rgba(74,222,128,0.07); border: 1px solid var(--accent-good);
+  border-radius: 8px; padding: 12px 14px; margin-bottom: 16px;
+}
+.best-score { font-size: 1.5rem; font-weight: bold; color: var(--accent-good); }
+.best-date { font-size: 0.95rem; margin-bottom: 4px; color: var(--text-primary); }
+.best-eta { color: var(--text-muted); font-size: 0.8rem; }
+table { width: 100%; border-collapse: collapse; margin-bottom: 16px; font-size: 0.82rem; }
+td, th { padding: 6px 8px; text-align: left; border-bottom: 1px solid var(--border); }
+th { color: var(--text-muted); font-size: 0.72rem; text-transform: uppercase; }
+.bar-wrap { display: flex; align-items: center; gap: 6px; }
+.bar { height: 8px; border-radius: 4px; }
+.seg-table td { font-size: 0.8rem; padding: 5px 8px; }
+.alert-item { color: var(--accent-warn); font-size: 0.75rem; }
+.no-data { color: var(--text-muted); font-style: italic; padding: 20px 0; }
+.model-note {
+  color: var(--text-muted); font-size: 0.78rem; margin-top: 8px;
+  padding: 8px 12px; background: var(--bg-secondary); border-radius: 6px;
+  border: 1px solid var(--border);
+}
+a { color: var(--accent-info); text-decoration: none; }
+.footer { margin-top: 20px; padding-top: 10px; border-top: 1px solid var(--border); color: var(--text-muted); font-size: 0.75rem; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="lite-content">
+
+{% if data %}
+<h1>⛵ PASSAGE PLANNER LITE</h1>
+<div class="meta">
+  {{ data.route_name }}<br>
+  Mis à jour : {{ data.computed_at[:16] if data.computed_at else '—' }} UTC
+</div>
+
+{% if data.best_departure %}
+<div class="best-box">
+  <div class="best-date">MEILLEUR DÉPART : {{ data.best_departure.date }}</div>
+  <div class="best-score">{{ data.best_departure.score }}/100</div>
+  <div style="color:{{ data.best_departure.score|score_color }};font-weight:bold;margin:2px 0">
+    {{ data.best_departure.label }}
+  </div>
+  {% if data.best_departure.adjusted_eta_hours %}
+  <div class="best-eta">ETA : {{ (data.best_departure.adjusted_eta_hours / 24)|round(1) }} jours (avec courants)</div>
+  {% endif %}
+</div>
+{% endif %}
+
+<h2>Départs — 7 jours</h2>
+{% if data.departures %}
+<table>
+  <tr><th>Date</th><th>Score</th><th>Verdict</th><th>Alertes</th></tr>
+  {% for dep in data.departures %}
+  <tr>
+    <td>{{ dep.date }}</td>
+    <td>
+      <div class="bar-wrap">
+        <div class="bar" style="width:{{ dep.score }}px;max-width:80px;background:{{ dep.score|score_color }}"></div>
+        <span style="color:{{ dep.score|score_color }};font-weight:bold">{{ dep.score }}</span>
+      </div>
+    </td>
+    <td style="color:{{ dep.score|score_color }}">{{ dep.label }}</td>
+    <td>
+      {% for a in dep.alerts %}
+      <div class="alert-item">⚠ {{ a[:60] }}</div>
+      {% endfor %}
+      {% if not dep.alerts %}<span style="color:var(--accent-good)">✓</span>{% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p class="no-data">Aucune simulation disponible.</p>
+{% endif %}
+
+{% if data.segments %}
+<h2>Conditions par segment</h2>
+<table class="seg-table">
+  <tr><th>Segment</th><th>Vent moy.</th><th>Vagues</th><th>Courant</th></tr>
+  {% for seg in data.segments %}
+  <tr>
+    <td>{{ seg.nm_start }}-{{ seg.nm_end }} NM</td>
+    <td>{{ seg.wind_avg }} kts</td>
+    <td>{{ seg.wave_avg }} m</td>
+    <td>{% if seg.current_avg %}{{ seg.current_avg }} kts{% else %}—{% endif %}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endif %}
+
+{% if data.best_model %}
+<div class="model-note">
+  Modèle le plus fiable (30j) : {{ data.best_model.model }} ±{{ data.best_model.error_kts }} kts
+  ({{ data.best_model.n_days }} jours de données)
+</div>
+{% else %}
+<div class="model-note">Vérification des modèles en cours…</div>
+{% endif %}
+
+{% else %}
+<h1>⛵ PASSAGE PLANNER LITE</h1>
+<p class="no-data">Aucune donnée disponible. Lancez le calcul sur <a href="/passage">/passage</a>.</p>
+{% endif %}
+
+<div class="footer">
+  <a href="/passage">→ Interface complète</a> &nbsp;
+  <a href="/accuracy">→ Précision modèles</a>
+</div>
+
+</div>
+{% endblock %}

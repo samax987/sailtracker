@@ -1,0 +1,1052 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SailTracker — Suivi en temps réel</title>
+
+  <!-- Leaflet CSS (servi localement) -->
+  <link rel="stylesheet" href="/lib/leaflet.css" />
+
+  <style>
+    /* =====================================================================
+       Reset & base
+    ===================================================================== */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg-panel:   rgba(10, 20, 45, 0.90);
+      --bg-panel2:  rgba(10, 20, 45, 0.85);
+      --border:     rgba(100, 160, 255, 0.25);
+      --accent:     #4a9eff;
+      --accent2:    #7ecfff;
+      --text:       #e8f4ff;
+      --text-dim:   #8ab4d4;
+      --green:      #3ddc84;
+      --orange:     #ffb347;
+      --red:        #ff5555;
+      --radius:     10px;
+      --font:       -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    }
+
+    html, body {
+      height: 100%;
+      font-family: var(--font);
+      background: #060e1e;
+      color: var(--text);
+      overflow: hidden;
+    }
+
+    /* =====================================================================
+       Carte plein écran
+    ===================================================================== */
+    #map {
+      position: fixed;
+      inset: 0;
+      z-index: 0;
+    }
+
+    /* =====================================================================
+       Panneaux overlay
+    ===================================================================== */
+    .panel {
+      position: fixed;
+      z-index: 500;
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      padding: 14px 16px;
+      min-width: 200px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.5);
+      transition: opacity 0.3s;
+    }
+
+    .panel-title {
+      font-size: 0.68rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: 10px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    /* --- Panneau info bateau (haut droite) --- */
+    #panel-boat {
+      top: 48px;
+      right: 12px;
+      min-width: 220px;
+    }
+
+    .stat-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 4px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+      gap: 12px;
+    }
+    .stat-row:last-child { border-bottom: none; }
+
+    .stat-label {
+      font-size: 0.72rem;
+      color: var(--text-dim);
+      white-space: nowrap;
+    }
+    .stat-value {
+      font-size: 0.92rem;
+      font-weight: 600;
+      color: var(--text);
+      text-align: right;
+    }
+    .stat-value.big {
+      font-size: 1.4rem;
+      font-weight: 700;
+      color: var(--accent2);
+    }
+
+    /* Indicateur connexion */
+    #conn-dot {
+      display: inline-block;
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 6px var(--green);
+      margin-right: 4px;
+      transition: background 0.5s, box-shadow 0.5s;
+    }
+    #conn-dot.warn  { background: var(--orange); box-shadow: 0 0 6px var(--orange); }
+    #conn-dot.error { background: var(--red);    box-shadow: 0 0 6px var(--red); }
+
+    /* --- Panneau météo (bas gauche) --- */
+    #panel-weather {
+      bottom: 60px;
+      left: 12px;
+      min-width: 240px;
+      max-width: 280px;
+    }
+
+    .weather-section {
+      margin-bottom: 8px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+    }
+    .weather-section:last-child { border-bottom: none; margin-bottom: 0; }
+
+    .weather-section-title {
+      font-size: 0.65rem;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      margin-bottom: 4px;
+    }
+
+    .weather-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.8rem;
+      padding: 1px 0;
+    }
+    .weather-row .label { color: var(--text-dim); }
+    .weather-row .val   { font-weight: 600; }
+
+    /* Flèche de direction vent */
+    .wind-arrow {
+      display: inline-block;
+      font-size: 1.1rem;
+      transition: transform 0.8s ease;
+      margin-left: 4px;
+    }
+
+    /* --- Panneau stats (bas droite) --- */
+    #panel-stats {
+      bottom: 60px;
+      right: 12px;
+      min-width: 180px;
+    }
+
+    /* --- Panneau contrôles (bas centre) --- */
+    #panel-controls {
+      bottom: 12px;
+      left: 50%;
+      transform: translateX(-50%);
+      min-width: unset;
+      display: flex;
+      gap: 8px;
+      padding: 8px 12px;
+      align-items: center;
+      white-space: nowrap;
+    }
+
+    /* =====================================================================
+       Boutons
+    ===================================================================== */
+    .btn {
+      background: rgba(74, 158, 255, 0.15);
+      border: 1px solid rgba(74, 158, 255, 0.4);
+      color: var(--accent2);
+      border-radius: 6px;
+      padding: 6px 12px;
+      font-size: 0.78rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s, border-color 0.2s;
+      font-family: var(--font);
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+    }
+    .btn:hover {
+      background: rgba(74, 158, 255, 0.30);
+      border-color: var(--accent);
+    }
+    .btn.active {
+      background: rgba(74, 158, 255, 0.35);
+      border-color: var(--accent2);
+      color: #fff;
+    }
+    .btn.danger {
+      background: rgba(255, 85, 85, 0.15);
+      border-color: rgba(255, 85, 85, 0.4);
+      color: #ff5555;
+    }
+    .btn.danger:hover {
+      background: rgba(255, 85, 85, 0.30);
+      border-color: #ff5555;
+    }
+
+    select.btn {
+      appearance: none;
+      -webkit-appearance: none;
+      padding-right: 20px;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%234a9eff'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 6px center;
+    }
+
+    /* =====================================================================
+       Responsive mobile
+    ===================================================================== */
+    @media (max-width: 600px) {
+      #panel-boat   { top: 44px; right: 8px; min-width: 180px; padding: 10px 12px; }
+      #panel-weather {
+        bottom: unset;
+        top: 8px;
+        left: 8px;
+        right: 8px;
+        max-width: unset;
+        display: none;  /* masqué par défaut sur mobile */
+      }
+      #panel-weather.show { display: block; }
+      #panel-stats  { display: none; }
+      #panel-controls {
+        bottom: 8px;
+        flex-wrap: wrap;
+        justify-content: center;
+      }
+    }
+
+    /* =====================================================================
+       Icône voilier SVG (injecté dans un DivIcon Leaflet)
+    ===================================================================== */
+    .boat-icon-wrapper {
+      width: 0;
+      height: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .boat-svg {
+      filter: drop-shadow(0 0 4px rgba(74, 158, 255, 0.8));
+    }
+
+    /* =====================================================================
+       Popup Leaflet customisé
+    ===================================================================== */
+    .leaflet-popup-content-wrapper {
+      background: var(--bg-panel2) !important;
+      border: 1px solid var(--border) !important;
+      color: var(--text) !important;
+      border-radius: var(--radius) !important;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.6) !important;
+      backdrop-filter: blur(10px) !important;
+    }
+    .leaflet-popup-tip {
+      background: var(--bg-panel2) !important;
+    }
+    .leaflet-popup-content {
+      margin: 10px 14px !important;
+      font-family: var(--font) !important;
+      font-size: 0.82rem !important;
+      line-height: 1.6 !important;
+    }
+    .popup-name {
+      font-size: 1rem;
+      font-weight: 700;
+      color: var(--accent2);
+      margin-bottom: 4px;
+    }
+
+    /* =====================================================================
+       Loading overlay
+    ===================================================================== */
+    #loading {
+      position: fixed;
+      inset: 0;
+      z-index: 9999;
+      background: #060e1e;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      transition: opacity 0.5s;
+    }
+    #loading.hidden { opacity: 0; pointer-events: none; }
+
+    .spinner {
+      width: 40px;
+      height: 40px;
+      border: 3px solid rgba(74, 158, 255, 0.2);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .loading-text {
+      color: var(--text-dim);
+      font-size: 0.85rem;
+      letter-spacing: 0.05em;
+    }
+
+    /* =====================================================================
+       Nav bar
+    ===================================================================== */
+    #nav-bar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 600;
+      display: flex;
+      gap: 4px;
+      padding: 6px 10px;
+      background: rgba(6, 14, 30, 0.85);
+      border-bottom: 1px solid var(--border);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      align-items: center;
+    }
+    .nav-link {
+      color: var(--text-dim);
+      text-decoration: none;
+      font-size: 0.75rem;
+      font-weight: 600;
+      padding: 4px 10px;
+      border-radius: 5px;
+      transition: background 0.2s, color 0.2s;
+    }
+    .nav-link:hover {
+      background: rgba(74, 158, 255, 0.15);
+      color: var(--accent2);
+    }
+    .nav-link.active {
+      color: var(--accent2);
+      background: rgba(74, 158, 255, 0.2);
+    }
+
+    /* =====================================================================
+       Bandeau "traversée en cours"
+    ===================================================================== */
+    #at-sea-banner {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      z-index: 1000;
+      background: linear-gradient(90deg, rgba(0,180,100,0.92) 0%, rgba(0,140,80,0.92) 100%);
+      color: #fff;
+      font-size: 0.8rem;
+      font-weight: 600;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      padding: 6px 16px;
+      backdrop-filter: blur(6px);
+      border-bottom: 1px solid rgba(255,255,255,0.2);
+      letter-spacing: 0.04em;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.3);
+    }
+    #at-sea-banner a { color: #fff; text-decoration: underline; opacity: 0.85; }
+    #at-sea-banner.active { display: flex; }
+    body.at-sea #panel-boat { top: 36px; }
+    body.at-sea nav#nav-bar { top: 32px; }
+  </style>
+</head>
+<body>
+
+<!-- Bandeau traversée en cours -->
+<div id="at-sea-banner">
+  <span>⛵ TRAVERSÉE EN COURS</span>
+  <span id="at-sea-progress">—%</span>
+  <span>·</span>
+  <span id="at-sea-eta">ETA : —</span>
+  <span>·</span>
+  <span id="at-sea-dist">— NM restants</span>
+  <span>·</span>
+  <a id="at-sea-link" href="/passage">Voir route →</a>
+</div>
+
+<!-- =========================================================================
+     Loading overlay
+========================================================================= -->
+<div id="loading">
+  <svg width="56" height="56" viewBox="0 0 56 56" fill="none">
+    <!-- Voilier simplifié -->
+    <path d="M28 48 L10 28 L28 8 Z" fill="#4a9eff" opacity="0.9"/>
+    <path d="M28 48 L46 32 L28 16 Z" fill="#7ecfff" opacity="0.7"/>
+    <line x1="28" y1="8" x2="28" y2="50" stroke="#4a9eff" stroke-width="2"/>
+    <path d="M12 46 Q28 52 44 46" stroke="#4a9eff" stroke-width="2" fill="none"/>
+  </svg>
+  <div class="loading-text">Chargement de SailTracker...</div>
+  <div class="spinner"></div>
+</div>
+
+<!-- =========================================================================
+     Navigation
+========================================================================= -->
+<nav id="nav-bar">
+  <a href="/" class="nav-link active">🧭 Tracker</a>
+  <a href="/passage" class="nav-link">📅 Planifier</a>
+  <a href="/accuracy" class="nav-link">📊 Modèles</a>
+  <a href="/passage/lite" class="nav-link">📡 Lite</a>
+</nav>
+
+<!-- =========================================================================
+     Carte
+========================================================================= -->
+<div id="map"></div>
+
+<!-- =========================================================================
+     Panneau info bateau
+========================================================================= -->
+<div class="panel" id="panel-boat">
+  <div class="panel-title">
+    <span id="conn-dot"></span>
+    <span id="boat-name">Mon Voilier</span>
+  </div>
+  <div class="stat-row">
+    <span class="stat-label">Vitesse</span>
+    <span class="stat-value big" id="boat-speed">—</span>
+  </div>
+  <div class="stat-row">
+    <span class="stat-label">Cap</span>
+    <span class="stat-value" id="boat-course">—</span>
+  </div>
+  <div class="stat-row">
+    <span class="stat-label">Statut</span>
+    <span class="stat-value" id="boat-status" style="font-size:0.75rem">—</span>
+  </div>
+  <div class="stat-row">
+    <span class="stat-label">Mise à jour</span>
+    <span class="stat-value" id="boat-update" style="font-size:0.75rem;color:var(--text-dim)">—</span>
+  </div>
+</div>
+
+<!-- =========================================================================
+     Panneau météo
+========================================================================= -->
+<div class="panel" id="panel-weather">
+  <div class="panel-title">Météo & Océan</div>
+
+  <div class="weather-section">
+    <div class="weather-section-title">🌬 Vent</div>
+    <div class="weather-row">
+      <span class="label">Vitesse</span>
+      <span class="val" id="w-wind-speed">—</span>
+    </div>
+    <div class="weather-row">
+      <span class="label">Direction</span>
+      <span class="val">
+        <span id="w-wind-dir">—</span>
+        <span class="wind-arrow" id="w-wind-arrow">↑</span>
+      </span>
+    </div>
+    <div class="weather-row">
+      <span class="label">Rafales</span>
+      <span class="val" id="w-wind-gusts">—</span>
+    </div>
+  </div>
+
+  <div class="weather-section">
+    <div class="weather-section-title">🌊 Vagues</div>
+    <div class="weather-row">
+      <span class="label">Hauteur</span>
+      <span class="val" id="w-wave-height">—</span>
+    </div>
+    <div class="weather-row">
+      <span class="label">Période</span>
+      <span class="val" id="w-wave-period">—</span>
+    </div>
+  </div>
+
+  <div class="weather-section">
+    <div class="weather-section-title">🌀 Houle</div>
+    <div class="weather-row">
+      <span class="label">Hauteur</span>
+      <span class="val" id="w-swell-height">—</span>
+    </div>
+    <div class="weather-row">
+      <span class="label">Direction</span>
+      <span class="val" id="w-swell-dir">—</span>
+    </div>
+    <div class="weather-row">
+      <span class="label">Période</span>
+      <span class="val" id="w-swell-period">—</span>
+    </div>
+  </div>
+
+  <div class="weather-section">
+    <div class="weather-section-title">↔ Courant de surface</div>
+    <div class="weather-row">
+      <span class="label">Vitesse</span>
+      <span class="val" id="w-current-speed">—</span>
+    </div>
+    <div class="weather-row">
+      <span class="label">Direction</span>
+      <span class="val" id="w-current-dir">—</span>
+    </div>
+  </div>
+
+  <div style="font-size:0.65rem;color:var(--text-dim);margin-top:6px;text-align:right">
+    Collecté : <span id="w-collected">—</span>
+  </div>
+</div>
+
+<!-- =========================================================================
+     Panneau statistiques voyage
+========================================================================= -->
+<div class="panel" id="panel-stats">
+  <div class="panel-title">📊 Voyage</div>
+  <div class="stat-row">
+    <span class="stat-label">Distance totale</span>
+    <span class="stat-value" id="s-distance">—</span>
+  </div>
+  <div class="stat-row">
+    <span class="stat-label">Vitesse moy.</span>
+    <span class="stat-value" id="s-avg-speed">—</span>
+  </div>
+  <div class="stat-row">
+    <span class="stat-label">Vitesse max.</span>
+    <span class="stat-value" id="s-max-speed">—</span>
+  </div>
+  <div class="stat-row">
+    <span class="stat-label">Suivi depuis</span>
+    <span class="stat-value" id="s-since" style="font-size:0.72rem">—</span>
+  </div>
+</div>
+
+<!-- =========================================================================
+     Barre de contrôles
+========================================================================= -->
+<div class="panel" id="panel-controls">
+  <button class="btn" id="btn-center" title="Centrer sur le bateau">⌖ Centrer</button>
+
+  <select class="btn" id="select-track" title="Durée de la trace">
+    <option value="24">Trace 24h</option>
+    <option value="48">Trace 48h</option>
+    <option value="72" selected>Trace 72h</option>
+    <option value="720">Trace complète</option>
+  </select>
+
+  <button class="btn active" id="btn-weather" title="Afficher/masquer météo">☁ Météo</button>
+  <button class="btn" id="btn-seamap" title="Afficher/masquer carte nautique">⚓ Nautique</button>
+  <a href="/passage" class="btn" style="text-decoration:none">📅 Planifier</a>
+  <a href="/accuracy" class="btn" style="font-size:0.75rem">📊 Modèles</a>
+  <a href="/passage/lite" class="btn" style="font-size:0.75rem">📡 Lite</a>
+  <button class="btn" id="btn-tracker-ctrl" title="Contrôler le tracker">⚙ Tracker</button>
+</div>
+
+<!-- =========================================================================
+     Tracker control modal
+========================================================================= -->
+<div id="tracker-modal" style="display:none; position:fixed; inset:0; z-index:2000;
+  background:rgba(0,0,0,.65); backdrop-filter:blur(3px); align-items:center; justify-content:center">
+  <div style="background:#161b22; border:1px solid #2d4a7a; border-radius:12px;
+    padding:24px; width:min(420px,90vw); color:#e2e8f0; font-family:sans-serif">
+
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px">
+      <span style="font-weight:700; font-size:1rem">⚙ Contrôle du Tracker</span>
+      <button id="btn-close-tracker" style="background:none;border:none;color:#94a3b8;cursor:pointer;font-size:1.2rem">✕</button>
+    </div>
+
+    <div id="tracker-status-box" style="background:#0a1628; border-radius:8px; padding:12px; margin-bottom:16px; font-size:.82rem">
+      <div>AIS service : <span id="ts-ais-status">—</span></div>
+      <div>Dernière pos. AIS : <span id="ts-ais-age">—</span></div>
+      <div>Dernière pos. InReach : <span id="ts-inreach-age">—</span></div>
+      <div>Total positions : <span id="ts-count">—</span></div>
+    </div>
+
+    <div style="display:flex; gap:8px; margin-bottom:12px; flex-wrap:wrap">
+      <button class="btn" id="btn-ais-start" style="flex:1">▶ Démarrer AIS</button>
+      <button class="btn" id="btn-ais-stop"  style="flex:1">⏸ Arrêter AIS</button>
+      <button class="btn" id="btn-ais-restart" style="flex:1">🔄 Redémarrer</button>
+    </div>
+
+    <button class="btn" id="btn-inreach-sync" style="width:100%; margin-bottom:12px">
+      📡 Sync InReach maintenant
+    </button>
+
+    <button class="btn danger" id="btn-tracker-reset" style="width:100%">
+      🗑 Réinitialiser les positions
+    </button>
+
+    <div id="tracker-msg" style="margin-top:10px; font-size:.78rem; color:#60a5fa; min-height:18px; text-align:center"></div>
+  </div>
+</div>
+
+<!-- Leaflet JS (servi localement) -->
+<script src="/lib/leaflet.js"></script>
+
+<script>
+// =============================================================================
+// Configuration
+// =============================================================================
+const API_BASE = '';           // Même origine que la page
+const REFRESH_POSITION_MS = 60 * 1000;    // 60 secondes
+const REFRESH_WEATHER_MS  = 10 * 60 * 1000; // 10 minutes
+const REFRESH_STATS_MS    = 5  * 60 * 1000; // 5 minutes
+
+// Seuils d'alerte pour l'indicateur de connexion
+const FRESH_THRESHOLD_MIN  = 30;   // Données fraîches
+const STALE_THRESHOLD_MIN  = 180;  // Données périmées
+
+// =============================================================================
+// État global
+// =============================================================================
+let map, boatMarker, trackPolyline, seamapLayer;
+let lastPosition = null;
+let trackHours = 72;
+let weatherVisible = true;
+let seamapVisible = false;
+
+// =============================================================================
+// Initialisation de la carte
+// =============================================================================
+function initMap() {
+  map = L.map('map', {
+    center: [27.7, -17.98],  // El Hierro par défaut (zone du bateau)
+    zoom: 11,
+    zoomControl: false,
+    attributionControl: true,
+  });
+
+  // Fond OSM — sauvegardé dans une variable pour le layer control
+  const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© <a href="https://openstreetmap.org">OpenStreetMap</a>',
+    maxZoom: 19,
+  }).addTo(map);
+
+  // Fond satellite Esri
+  const esriSatellite = L.tileLayer(
+    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    { attribution: '© Esri', maxZoom: 19 }
+  );
+
+  // Layer control (utilise la variable osmLayer, pas map._layers)
+  L.control.layers(
+    { 'OpenStreetMap': osmLayer, 'Satellite (Esri)': esriSatellite },
+    {},
+    { position: 'topright', collapsed: true }
+  ).addTo(map);
+
+  // Overlay OpenSeaMap (tuiles nautiques)
+  seamapLayer = L.tileLayer(
+    'https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png',
+    { attribution: '© <a href="https://openseamap.org">OpenSeaMap</a>', opacity: 0.7 }
+  );
+
+  // Contrôle de zoom en bas à droite
+  L.control.zoom({ position: 'bottomright' }).addTo(map);
+
+  // Polyline de trace (vide pour l'instant)
+  trackPolyline = L.polyline([], {
+    color: '#ff4444',
+    weight: 3,
+    opacity: 0.75,
+    lineJoin: 'round',
+  }).addTo(map);
+}
+
+// =============================================================================
+// Icône voilier SVG orientée selon le cap
+// =============================================================================
+function createBoatIcon(course) {
+  const rotation = (course || 0);
+  const svg = `
+    <svg width="32" height="44" viewBox="0 0 32 44" xmlns="http://www.w3.org/2000/svg"
+         class="boat-svg" style="transform:rotate(${rotation}deg);transform-origin:center center">
+      <!-- Coque -->
+      <path d="M16 40 Q8 36 6 28 L16 4 L26 28 Q24 36 16 40Z"
+            fill="#4a9eff" opacity="0.9"/>
+      <!-- Voile principale -->
+      <path d="M16 6 L16 32 L7 26 Z"
+            fill="white" opacity="0.85"/>
+      <!-- Grand-voile -->
+      <path d="M16 6 L16 30 L25 22 Z"
+            fill="#cce8ff" opacity="0.75"/>
+      <!-- Mât -->
+      <line x1="16" y1="4" x2="16" y2="38" stroke="#0055aa" stroke-width="1.5"/>
+    </svg>`;
+
+  return L.divIcon({
+    html: `<div class="boat-icon-wrapper">${svg}</div>`,
+    iconSize: [0, 0],
+    iconAnchor: [0, 0],
+    className: '',
+  });
+}
+
+// =============================================================================
+// Mise à jour de la position du bateau
+// =============================================================================
+async function fetchPosition() {
+  try {
+    const resp = await fetch(`${API_BASE}/api/position/latest`);
+    if (!resp.ok) { updateConnectionDot(null); return; }
+    const pos = await resp.json();
+
+    lastPosition = pos;
+    updateBoatPanel(pos);
+    updateConnectionDot(pos.timestamp);
+
+    const latlng = [pos.latitude, pos.longitude];
+
+    if (!boatMarker) {
+      boatMarker = L.marker(latlng, { icon: createBoatIcon(pos.course), zIndexOffset: 1000 })
+        .addTo(map);
+      map.setView(latlng, 8);
+    } else {
+      boatMarker.setLatLng(latlng);
+    }
+
+    // Mettre à jour l'icône avec le nouveau cap
+    boatMarker.setIcon(createBoatIcon(pos.course));
+
+    // Popup
+    const popupContent = buildBoatPopup(pos);
+    boatMarker.bindPopup(popupContent);
+
+  } catch (err) {
+    console.warn('[SailTracker] Erreur position:', err);
+    updateConnectionDot(null);
+  }
+}
+
+function buildBoatPopup(pos) {
+  const ago = pos.timestamp ? timeAgo(pos.timestamp) : '?';
+  return `
+    <div class="popup-name">⛵ ${document.getElementById('boat-name').textContent}</div>
+    <div>🕐 ${ago}</div>
+    <div>🚀 <strong>${fmt(pos.speed_knots, 1)} nœuds</strong></div>
+    <div>🧭 Cap : <strong>${fmt(pos.course, 0)}°</strong></div>
+    <div>⚡ ${pos.nav_status || '—'}</div>
+    <div style="font-size:0.7rem;color:#8ab4d4;margin-top:4px">
+      ${pos.latitude.toFixed(4)}°N ${pos.longitude.toFixed(4)}°E
+    </div>`;
+}
+
+function updateBoatPanel(pos) {
+  setText('boat-speed', pos.speed_knots != null ? `${fmt(pos.speed_knots, 1)} kn` : '—');
+  setText('boat-course', pos.course != null ? `${fmt(pos.course, 0)}° ${degToCompass(pos.course)}` : '—');
+  setText('boat-status', pos.nav_status || '—');
+  setText('boat-update', pos.timestamp ? timeAgo(pos.timestamp) : '—');
+}
+
+// =============================================================================
+// Mise à jour de la trace
+// =============================================================================
+async function fetchTrack() {
+  try {
+    const resp = await fetch(`${API_BASE}/api/position/track?hours=${trackHours}`);
+    if (!resp.ok) return;
+    const data = await resp.json();
+
+    const latlngs = data.track.map(p => [p.latitude, p.longitude]);
+    trackPolyline.setLatLngs(latlngs);
+  } catch (err) {
+    console.warn('[SailTracker] Erreur trace:', err);
+  }
+}
+
+// =============================================================================
+// Mise à jour météo
+// =============================================================================
+async function fetchWeather() {
+  try {
+    const resp = await fetch(`${API_BASE}/api/weather/latest`);
+    if (!resp.ok) return;
+    const d = await resp.json();
+
+    // Vent
+    const ws = d.wind?.speed_kmh;
+    const wd = d.wind?.direction_deg;
+    setText('w-wind-speed', ws != null ? `${fmt(ws, 1)} km/h` : '—');
+    setText('w-wind-dir', wd != null ? `${fmt(wd, 0)}° ${degToCompass(wd)}` : '—');
+    setText('w-wind-gusts', d.wind?.gusts_kmh != null ? `${fmt(d.wind.gusts_kmh, 1)} km/h` : '—');
+    if (wd != null) {
+      document.getElementById('w-wind-arrow').style.transform = `rotate(${wd}deg)`;
+    }
+
+    // Vagues
+    setText('w-wave-height', d.waves?.height_m != null ? `${fmt(d.waves.height_m, 1)} m` : '—');
+    setText('w-wave-period', d.waves?.period_s != null ? `${fmt(d.waves.period_s, 1)} s` : '—');
+
+    // Houle
+    setText('w-swell-height', d.swell?.height_m != null ? `${fmt(d.swell.height_m, 1)} m` : '—');
+    setText('w-swell-dir', d.swell?.direction_deg != null ? `${fmt(d.swell.direction_deg, 0)}° ${degToCompass(d.swell.direction_deg)}` : '—');
+    setText('w-swell-period', d.swell?.period_s != null ? `${fmt(d.swell.period_s, 1)} s` : '—');
+
+    // Courant
+    setText('w-current-speed', d.current?.speed_knots != null ? `${fmt(d.current.speed_knots, 2)} kn` : '—');
+    setText('w-current-dir', d.current?.direction_deg != null ? `${fmt(d.current.direction_deg, 0)}° ${degToCompass(d.current.direction_deg)}` : '—');
+
+    // Heure collecte
+    if (d.collected_at) {
+      setText('w-collected', timeAgo(d.collected_at));
+    }
+  } catch (err) {
+    console.warn('[SailTracker] Erreur météo:', err);
+  }
+}
+
+// =============================================================================
+// Statistiques voyage
+// =============================================================================
+async function fetchStats() {
+  try {
+    const resp = await fetch(`${API_BASE}/api/stats`);
+    if (!resp.ok) return;
+    const d = await resp.json();
+
+    setText('s-distance', d.distance_nm != null ? `${fmt(d.distance_nm, 1)} nm` : '—');
+    setText('s-avg-speed', d.avg_speed_knots != null ? `${fmt(d.avg_speed_knots, 1)} kn` : '—');
+    setText('s-max-speed', d.max_speed_knots != null ? `${fmt(d.max_speed_knots, 1)} kn` : '—');
+    if (d.tracking_since) {
+      const d_ = new Date(d.tracking_since);
+      setText('s-since', `${d_.toLocaleDateString('fr-FR')} ${d_.toLocaleTimeString('fr-FR', {hour:'2-digit',minute:'2-digit'})} UTC`);
+    }
+  } catch (err) {
+    console.warn('[SailTracker] Erreur stats:', err);
+  }
+}
+
+// =============================================================================
+// Indicateur de connexion
+// =============================================================================
+function updateConnectionDot(timestampStr) {
+  const dot = document.getElementById('conn-dot');
+  if (!timestampStr) {
+    dot.className = 'error';
+    return;
+  }
+  const ts = new Date(timestampStr);
+  const ageMin = (Date.now() - ts.getTime()) / 60000;
+  if (ageMin < FRESH_THRESHOLD_MIN) {
+    dot.className = '';    // vert
+  } else if (ageMin < STALE_THRESHOLD_MIN) {
+    dot.className = 'warn';
+  } else {
+    dot.className = 'error';
+  }
+}
+
+// =============================================================================
+// Contrôles
+// =============================================================================
+document.getElementById('btn-center').addEventListener('click', () => {
+  if (lastPosition) {
+    map.flyTo([lastPosition.latitude, lastPosition.longitude], Math.max(map.getZoom(), 10), {
+      duration: 1.2,
+    });
+  }
+});
+
+document.getElementById('select-track').addEventListener('change', async (e) => {
+  trackHours = parseInt(e.target.value, 10);
+  await fetchTrack();
+});
+
+document.getElementById('btn-weather').addEventListener('click', () => {
+  weatherVisible = !weatherVisible;
+  const panel = document.getElementById('panel-weather');
+  panel.style.display = weatherVisible ? '' : 'none';
+  document.getElementById('btn-weather').classList.toggle('active', weatherVisible);
+});
+
+document.getElementById('btn-seamap').addEventListener('click', () => {
+  seamapVisible = !seamapVisible;
+  if (seamapVisible) {
+    seamapLayer.addTo(map);
+  } else {
+    map.removeLayer(seamapLayer);
+  }
+  document.getElementById('btn-seamap').classList.toggle('active', seamapVisible);
+});
+
+// =============================================================================
+// Utilitaires
+// =============================================================================
+
+function setText(id, val) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = val;
+}
+
+function fmt(val, decimals) {
+  if (val == null || isNaN(val)) return '—';
+  return Number(val).toFixed(decimals);
+}
+
+function timeAgo(isoStr) {
+  const d = new Date(isoStr);
+  const diff = Date.now() - d.getTime();
+  const m = Math.floor(diff / 60000);
+  if (m < 1) return "à l'instant";
+  if (m < 60) return `il y a ${m} min`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `il y a ${h}h${String(m % 60).padStart(2, '0')}`;
+  return `il y a ${Math.floor(h / 24)}j`;
+}
+
+function degToCompass(deg) {
+  const dirs = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSO','SO','OSO','O','ONO','NO','NNO'];
+  return dirs[Math.round((deg % 360) / 22.5) % 16];
+}
+
+// =============================================================================
+// Tracker control
+// =============================================================================
+async function trackerAction(endpoint, opts) {
+  opts = opts || {};
+  const msg = document.getElementById('tracker-msg');
+  msg.textContent = 'En cours\u2026';
+  try {
+    const resp = await fetch('/api/tracker/' + endpoint, {
+      method: opts.method || 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: opts.body ? JSON.stringify(opts.body) : undefined,
+    });
+    const d = await resp.json();
+    msg.textContent = d.message || (d.success ? 'OK' : ('Erreur : ' + (d.error || '?')));
+    msg.style.color = d.success ? '#4ade80' : '#f87171';
+    if (d.success) await refreshTrackerStatus();
+  } catch(e) {
+    msg.textContent = 'Erreur r\u00e9seau : ' + e.message;
+    msg.style.color = '#f87171';
+  }
+}
+
+async function refreshTrackerStatus() {
+  try {
+    const d = await (await fetch('/api/tracker/status')).json();
+    const aisEl = document.getElementById('ts-ais-status');
+    aisEl.textContent = d.ais.active ? '\u2705 En marche' : '\ud83d\udd34 Arr\u00eat\u00e9';
+    aisEl.style.color = d.ais.active ? '#4ade80' : '#f87171';
+    document.getElementById('ts-ais-age').textContent = d.ais_last.age_minutes != null
+      ? 'il y a ' + d.ais_last.age_minutes + ' min' : '\u2014';
+    document.getElementById('ts-inreach-age').textContent = d.inreach.age_minutes != null
+      ? 'il y a ' + d.inreach.age_minutes + ' min' : '\u2014';
+    document.getElementById('ts-count').textContent = d.positions_count;
+  } catch(e) { /* silencieux */ }
+}
+
+document.getElementById('btn-tracker-ctrl').addEventListener('click', () => {
+  document.getElementById('tracker-modal').style.display = 'flex';
+  refreshTrackerStatus();
+});
+document.getElementById('btn-close-tracker').addEventListener('click', () => {
+  document.getElementById('tracker-modal').style.display = 'none';
+});
+document.getElementById('tracker-modal').addEventListener('click', e => {
+  if (e.target === e.currentTarget) e.currentTarget.style.display = 'none';
+});
+document.getElementById('btn-ais-start').addEventListener('click', () => trackerAction('start'));
+document.getElementById('btn-ais-stop').addEventListener('click', () => trackerAction('stop'));
+document.getElementById('btn-ais-restart').addEventListener('click', () => trackerAction('restart'));
+document.getElementById('btn-inreach-sync').addEventListener('click', () => trackerAction('sync-inreach'));
+document.getElementById('btn-tracker-reset').addEventListener('click', async () => {
+  const n = document.getElementById('ts-count').textContent;
+  if (!confirm('Supprimer ' + n + ' positions ? Cette action est irr\u00e9versible.')) return;
+  await trackerAction('reset', { body: { confirm: 'RESET' } });
+});
+
+// =============================================================================
+// Bootstrap
+// =============================================================================
+async function fetchAtSeaStatus() {
+  try {
+    const r = await fetch('/api/at-sea');
+    if (!r.ok) return;
+    const d = await r.json();
+    const banner = document.getElementById('at-sea-banner');
+    if (d.at_sea) {
+      document.getElementById('at-sea-progress').textContent = `${d.progress_pct}%`;
+      document.getElementById('at-sea-eta').textContent = `ETA : ${d.eta || '—'}`;
+      document.getElementById('at-sea-dist').textContent = `${d.distance_remaining_nm} NM restants`;
+      const link = document.getElementById('at-sea-link');
+      if (d.route_id) link.href = `/passage?route=${d.route_id}`;
+      banner.classList.add('active');
+      document.body.classList.add('at-sea');
+    } else {
+      banner.classList.remove('active');
+      document.body.classList.remove('at-sea');
+    }
+  } catch(e) { /* silencieux */ }
+}
+
+async function bootstrap() {
+  const loading = document.getElementById('loading');
+
+  try {
+    initMap();
+  } catch (err) {
+    console.error('Erreur initMap:', err);
+    const txt = loading.querySelector('.loading-text');
+    if (txt) txt.textContent = 'Erreur carte : ' + err.message;
+    return;
+  }
+
+  // Chargement initial en parallèle — allSettled ne bloque jamais
+  await Promise.allSettled([
+    fetchPosition(),
+    fetchTrack(),
+    fetchWeather(),
+    fetchStats(),
+    fetchAtSeaStatus(),
+  ]);
+
+  // Masquer le loading overlay dans tous les cas
+  loading.classList.add('hidden');
+  setTimeout(() => loading.remove(), 600);
+
+  // Auto-refresh
+  setInterval(async () => {
+    await fetchPosition();
+    await fetchTrack();
+  }, REFRESH_POSITION_MS);
+
+  setInterval(fetchWeather, REFRESH_WEATHER_MS);
+  setInterval(fetchStats, REFRESH_STATS_MS);
+  setInterval(fetchAtSeaStatus, 5 * 60 * 1000); // toutes les 5 min
+}
+
+bootstrap();
+</script>
+</body>
+</html>

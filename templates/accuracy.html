@@ -1,0 +1,171 @@
+{% extends "base.html" %}
+
+{% block title %}SailTracker — Précision des modèles{% endblock %}
+
+{% block nav_accuracy %}active{% endblock %}
+
+{% block head_scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+{% endblock %}
+
+{% block head_styles %}
+<style>
+.content { max-width: 1400px; margin: 0 auto; padding: 16px; }
+.info-box {
+  background: rgba(96,165,250,0.07); border: 1px solid rgba(96,165,250,0.2);
+  border-radius: 8px; padding: 12px 16px; margin-bottom: 16px;
+  font-size: .85rem; color: var(--text-muted);
+}
+.info-box strong { color: var(--accent-info); }
+h2 { font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .1em; color: var(--accent-info); margin: 16px 0 8px; }
+.table-wrap { overflow-x: auto; margin-bottom: 20px; }
+table { border-collapse: collapse; min-width: 600px; font-size: .82rem; }
+thead th {
+  background: var(--bg-tertiary); color: var(--text-muted);
+  font-size: .68rem; text-transform: uppercase; letter-spacing: .08em;
+  padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border); white-space: nowrap;
+}
+tbody td { padding: 8px 12px; border-bottom: 1px solid rgba(45,74,122,0.4); }
+.zone-label { font-weight: 600; color: var(--text-primary); white-space: nowrap; }
+.cell-good { background: rgba(74,222,128,.15); color: var(--accent-good); border-radius: 4px; padding: 3px 8px; font-weight: 700; font-size: .8rem; white-space: nowrap; }
+.cell-ok   { background: rgba(251,191,36,.12); color: var(--accent-warn); border-radius: 4px; padding: 3px 8px; font-weight: 700; font-size: .8rem; white-space: nowrap; }
+.cell-bad  { background: rgba(248,113,113,.1); color: var(--accent-danger); border-radius: 4px; padding: 3px 8px; font-weight: 700; font-size: .8rem; white-space: nowrap; }
+.cell-empty { color: var(--text-muted); font-size: .75rem; }
+.charts-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 20px; }
+@media(max-width:800px){ .charts-grid { grid-template-columns: 1fr; } }
+.chart-card { background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 8px; padding: 12px; }
+.chart-title { font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--accent-info); margin-bottom: 10px; }
+.chart-wrap { position: relative; height: 200px; }
+.legend-pills { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 6px; }
+.legend-pill { display: flex; align-items: center; gap: 4px; font-size: .68rem; color: var(--text-muted); }
+.legend-dot { width: 10px; height: 10px; border-radius: 50%; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="content">
+
+{% if days_count < 7 %}
+<div class="info-box">
+  ⏳ <strong>Accumulation en cours</strong> — {{ days_count }}/7 jours de données disponibles.
+  Le vérificateur tourne chaque jour à 06h UTC et accumule progressivement les erreurs de prévision.
+</div>
+{% else %}
+<div class="info-box">
+  ✅ <strong>{{ days_count }} jours</strong> de données de vérification.
+  Erreurs calculées sur 4 zones × 3 modèles × 5 horizons.
+  Vert &lt; 3 kts • Orange &lt; 6 kts • Rouge ≥ 6 kts.
+</div>
+{% endif %}
+
+<h2>Meilleur modèle par zone et horizon</h2>
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr>
+      <th>Zone</th>
+      {% for h in horizons %}<th>J+{{ h }}</th>{% endfor %}
+    </tr>
+  </thead>
+  <tbody>
+    {% for zone in zones %}
+    <tr>
+      <td class="zone-label">{{ zone.replace('_',' ').title() }}</td>
+      {% for h in horizons %}
+      {% set entry = best_table.get(zone, {}).get(h) %}
+      <td>
+        {% if entry %}
+          {% set err = entry.error %}
+          {% if err < 3 %}
+          <span class="cell-good">{{ entry.model.split('_')[0].upper() }}<br>±{{ err }} kts</span>
+          {% elif err < 6 %}
+          <span class="cell-ok">{{ entry.model.split('_')[0].upper() }}<br>±{{ err }} kts</span>
+          {% else %}
+          <span class="cell-bad">{{ entry.model.split('_')[0].upper() }}<br>±{{ err }} kts</span>
+          {% endif %}
+        {% else %}
+          <span class="cell-empty">—</span>
+        {% endif %}
+      </td>
+      {% endfor %}
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+
+<h2>Évolution de l'erreur par zone</h2>
+<div class="charts-grid">
+{% for zone in zones %}
+<div class="chart-card">
+  <div class="chart-title">{{ zone.replace('_', ' ').title() }}</div>
+  <div class="chart-wrap"><canvas id="chart-{{ zone }}"></canvas></div>
+</div>
+{% endfor %}
+</div>
+
+<div class="legend-pills">
+  <span style="font-size:.72rem;color:var(--text-muted);margin-right:4px">Modèles :</span>
+  <span class="legend-pill"><span class="legend-dot" style="background:var(--accent-info)"></span>ECMWF IFS</span>
+  <span class="legend-pill"><span class="legend-dot" style="background:var(--accent-good)"></span>GFS</span>
+  <span class="legend-pill"><span class="legend-dot" style="background:var(--accent-warn)"></span>ICON</span>
+</div>
+
+</div>
+
+<script>
+const horizons = {{ horizons | tojson }};
+const chartData = {{ chart_data | tojson }};
+const zones = {{ zones | tojson }};
+const modelColors = {
+  'ecmwf_ifs025': '#60a5fa',
+  'gfs_seamless':  '#4ade80',
+  'icon_seamless': '#fbbf24',
+};
+const modelLabels = {
+  'ecmwf_ifs025': 'ECMWF IFS',
+  'gfs_seamless':  'GFS',
+  'icon_seamless': 'ICON',
+};
+
+zones.forEach(zone => {
+  const canvas = document.getElementById('chart-' + zone);
+  if (!canvas) return;
+  const zoneData = chartData[zone] || {};
+  const datasets = Object.entries(zoneData).map(([model, vals]) => ({
+    label: modelLabels[model] || model,
+    data: vals,
+    borderColor: modelColors[model] || '#aaa',
+    backgroundColor: 'transparent',
+    borderWidth: 2,
+    pointRadius: 4,
+    tension: 0.3,
+    spanGaps: true,
+  }));
+
+  new Chart(canvas, {
+    type: 'line',
+    data: { labels: horizons.map(h => 'J+' + h), datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: '#1a2744', titleColor: '#e2e8f0', bodyColor: '#94a3b8',
+          borderColor: '#2d4a7a', borderWidth: 1,
+          callbacks: { label: ctx => `${ctx.dataset.label}: ±${ctx.parsed.y != null ? ctx.parsed.y.toFixed(2) + ' kts' : '—'}` },
+        },
+      },
+      scales: {
+        x: { grid: { color: 'rgba(45,74,122,0.4)' }, ticks: { color: '#94a3b8', font: { size: 10 } } },
+        y: {
+          grid: { color: 'rgba(45,74,122,0.4)' },
+          ticks: { color: '#94a3b8', font: { size: 10 }, callback: v => '±' + v + ' kts' },
+          min: 0, suggestedMax: 10,
+        },
+      },
+    },
+  });
+});
+</script>
+{% endblock %}

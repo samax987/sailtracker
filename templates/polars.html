@@ -1,0 +1,493 @@
+{% extends "base.html" %}
+{% block title %}Polaires — POLLEN 1{% endblock %}
+{% block nav_polars %}active{% endblock %}
+
+{% block head_styles %}
+<style>
+  .page-wrap { max-width: 1400px; margin: 0 auto; padding: 16px; }
+  .page-title { font-size: 1.1rem; font-weight: 700; color: var(--accent-wind); margin-bottom: 16px; display: flex; align-items: center; gap: 10px; }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media(max-width: 900px) { .grid-2 { grid-template-columns: 1fr; } }
+  .card { background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  .card-header { padding: 10px 14px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+  .card-title { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .1em; color: var(--accent-info); }
+  .card-body { padding: 14px; }
+  .full-width { grid-column: 1 / -1; }
+
+  /* Canvas polaire */
+  #polar-canvas { display: block; margin: 0 auto; background: transparent; cursor: crosshair; }
+
+  /* Calculateur rapide */
+  .calc-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+  .calc-row label { font-size: 0.74rem; color: var(--text-muted); }
+  .calc-row input { background: var(--bg-tertiary); border: 1px solid var(--border); color: var(--text-primary); border-radius: 6px; padding: 5px 9px; font-size: 0.82rem; width: 80px; }
+  .calc-result { font-size: 1.3rem; font-weight: 700; color: var(--accent-good); }
+
+  /* Tableau éditable */
+  .polar-table-wrap { overflow-x: auto; max-height: 480px; overflow-y: auto; }
+  .polar-table { border-collapse: collapse; font-size: 0.72rem; width: 100%; }
+  .polar-table th { background: var(--bg-tertiary); color: var(--text-muted); padding: 5px 6px; text-align: center; border: 1px solid var(--border); position: sticky; top: 0; z-index: 2; }
+  .polar-table td { padding: 3px 4px; text-align: center; border: 1px solid var(--border); min-width: 40px; }
+  .polar-table td[contenteditable="true"] { cursor: text; }
+  .polar-table td[contenteditable="true"]:focus { outline: 2px solid var(--accent-info); background: rgba(96,165,250,0.1); }
+  .polar-table .twa-col { background: var(--bg-tertiary); color: var(--text-muted); font-weight: 600; }
+
+  /* Barre actions */
+  .actions-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
+  .btn-green { background: rgba(74,222,128,0.12); border-color: rgba(74,222,128,0.35); color: var(--accent-good); }
+  .btn-green:hover { background: rgba(74,222,128,0.25); }
+  .btn-danger { background: rgba(248,113,113,0.1); border-color: rgba(248,113,113,0.3); color: var(--accent-danger); }
+  .btn-danger:hover { background: rgba(248,113,113,0.2); }
+
+  /* Stats calibration */
+  .stats-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
+  .stat-box { background: var(--bg-tertiary); border-radius: 8px; padding: 10px 12px; text-align: center; }
+  .stat-box .stat-val { font-size: 1.4rem; font-weight: 700; color: var(--accent-wind); }
+  .stat-box .stat-lbl { font-size: 0.66rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: .08em; margin-top: 2px; }
+
+  /* Toggle */
+  .toggle-wrap { display: flex; gap: 6px; align-items: center; font-size: 0.78rem; color: var(--text-muted); }
+  .toggle-wrap input[type=checkbox] { cursor: pointer; accent-color: var(--accent-info); width: 15px; height: 15px; }
+
+  /* Toast */
+  #toast { position: fixed; bottom: 20px; right: 20px; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 8px; padding: 10px 16px; font-size: 0.82rem; display: none; z-index: 9999; }
+  #toast.ok { border-color: var(--accent-good); color: var(--accent-good); }
+  #toast.err { border-color: var(--accent-danger); color: var(--accent-danger); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-wrap">
+  <div class="page-title">
+    &#x1F6A4; Polaires POLLEN 1
+    <span style="font-size:0.72rem;color:var(--text-muted);font-weight:400">Diagramme polaire de vitesse — voilier 12m</span>
+  </div>
+
+  <div class="actions-bar">
+    <button class="btn btn-green" onclick="savePolarChanges()">&#x1F4BE; Sauvegarder</button>
+    <button class="btn" onclick="exportPolars()">&#x2B07; Exporter CSV</button>
+    <button class="btn btn-danger" onclick="resetPolars()">&#x21BA; Reset défaut</button>
+    <div class="toggle-wrap">
+      <input type="checkbox" id="chk-obs" onchange="toggleObservations(this.checked)"> Afficher observations réelles
+    </div>
+    <div class="toggle-wrap">
+      <input type="checkbox" id="chk-calibrated"> Afficher calibré vs théorique
+    </div>
+    <span id="save-status" style="font-size:0.74rem;color:var(--text-muted)"></span>
+  </div>
+
+  <div class="grid-2">
+    <!-- Diagramme polaire -->
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Diagramme polaire</span>
+        <span style="font-size:0.7rem;color:var(--text-muted)">Cliquez pour calculer la vitesse</span>
+      </div>
+      <div class="card-body" style="padding:10px">
+        <canvas id="polar-canvas" width="480" height="480"></canvas>
+        <div style="margin-top:8px;font-size:0.7rem;color:var(--text-muted);text-align:center" id="canvas-legend"></div>
+      </div>
+    </div>
+
+    <!-- Calculateur + stats -->
+    <div style="display:flex;flex-direction:column;gap:16px">
+      <!-- Calculateur rapide -->
+      <div class="card">
+        <div class="card-header"><span class="card-title">Calculateur rapide</span></div>
+        <div class="card-body">
+          <div class="calc-row">
+            <label>TWA <b id="lbl-twa">90</b>°</label>
+            <input type="range" id="inp-twa" min="0" max="180" value="90" step="5" style="width:160px" oninput="updateCalc()">
+            <label>TWS <b id="lbl-tws">15</b> kts</label>
+            <input type="range" id="inp-tws" min="3" max="40" value="15" step="1" style="width:160px" oninput="updateCalc()">
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;margin-top:8px">
+            <span style="font-size:0.8rem;color:var(--text-muted)">Vitesse bateau :</span>
+            <span class="calc-result" id="calc-result">—</span>
+            <span style="font-size:0.8rem;color:var(--text-muted)">kts</span>
+          </div>
+          <div style="margin-top:8px;font-size:0.72rem;color:var(--text-muted)">
+            VMG : <b id="calc-vmg">—</b> kts &nbsp;|&nbsp; Allure : <b id="calc-allure">—</b>
+          </div>
+        </div>
+      </div>
+
+      <!-- Stats calibration -->
+      <div class="card">
+        <div class="card-header"><span class="card-title">Calibration</span></div>
+        <div class="card-body">
+          <div class="stats-grid" id="stats-grid">
+            <div class="stat-box"><div class="stat-val" id="s-nobs">—</div><div class="stat-lbl">Observations</div></div>
+            <div class="stat-box"><div class="stat-val" id="s-rmse">—</div><div class="stat-lbl">RMSE (kts)</div></div>
+            <div class="stat-box"><div class="stat-val" id="s-zones">—</div><div class="stat-lbl">Zones calibrées</div></div>
+          </div>
+          <div id="obs-list" style="margin-top:12px;max-height:140px;overflow-y:auto;font-size:0.7rem;color:var(--text-muted)"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tableau éditable (full width) -->
+    <div class="card full-width">
+      <div class="card-header">
+        <span class="card-title">Tableau des polaires (cliquez une cellule pour éditer)</span>
+        <span style="font-size:0.7rem;color:var(--text-muted)">TWA (lignes) × TWS en nœuds (colonnes)</span>
+      </div>
+      <div class="card-body" style="padding:8px">
+        <div class="polar-table-wrap">
+          <table class="polar-table" id="polar-table"></table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+// =============================================================================
+// Données globales
+// =============================================================================
+let polarData = null;
+let observations = [];
+let showObs = false;
+const TWS_DISPLAY = [6, 10, 14, 20, 25];  // vitesses à afficher sur le diagramme
+
+// Couleurs par vitesse de vent
+const TWS_COLORS = {6:'#60a5fa', 10:'#4ade80', 14:'#facc15', 20:'#fb923c', 25:'#f87171'};
+
+// =============================================================================
+// Init
+// =============================================================================
+async function init() {
+  await loadPolars();
+  await loadStats();
+  updateCalc();
+}
+
+async function loadPolars() {
+  const resp = await fetch('/api/polars');
+  polarData = await resp.json();
+  buildTable();
+  drawPolar();
+}
+
+async function loadStats() {
+  try {
+    const [obsResp, cmpResp] = await Promise.all([
+      fetch('/api/polars/observations'),
+      fetch('/api/polars/comparison'),
+    ]);
+    const obsData = await obsResp.json();
+    const cmpData = await cmpResp.json();
+    observations = obsData.observations || [];
+    document.getElementById('s-nobs').textContent = observations.length;
+    document.getElementById('s-rmse').textContent = cmpData.rmse ? cmpData.rmse.toFixed(2) : '—';
+    // Zones calibrées = nombre de cases avec >5 obs
+    const zones = countCalibratedZones(observations);
+    document.getElementById('s-zones').textContent = zones;
+    renderObsList();
+  } catch(e) {
+    console.warn('Stats indisponibles:', e);
+  }
+}
+
+function countCalibratedZones(obs) {
+  if (!obs.length || !polarData) return 0;
+  const counts = {};
+  const twaBins = polarData.twa;
+  const twsBins = polarData.tws;
+  for (const o of obs) {
+    const twa_i = twaBins.reduce((bi, b, i) => Math.abs(b - o.twa_deg) < Math.abs(twaBins[bi] - o.twa_deg) ? i : bi, 0);
+    const tws_i = twsBins.reduce((bi, b, i) => Math.abs(b - o.tws_kts) < Math.abs(twsBins[bi] - o.tws_kts) ? i : bi, 0);
+    const key = `${twa_i}_${tws_i}`;
+    counts[key] = (counts[key] || 0) + 1;
+  }
+  return Object.values(counts).filter(c => c >= 5).length;
+}
+
+function renderObsList() {
+  const el = document.getElementById('obs-list');
+  if (!observations.length) { el.textContent = 'Aucune observation.'; return; }
+  const last5 = observations.slice(0, 5);
+  el.innerHTML = '<b>Dernières observations :</b><br>' + last5.map(o =>
+    `${o.timestamp?.slice(0,16).replace('T',' ')} | TWA ${o.twa_deg?.toFixed(0)}° TWS ${o.tws_kts?.toFixed(1)}kts → STW ${o.stw_kts?.toFixed(2)}kts`
+  ).join('<br>');
+}
+
+// =============================================================================
+// Tableau éditable
+// =============================================================================
+function speedColor(v) {
+  const t = Math.max(0, Math.min(1, (v - 0) / 8));
+  if (t < 0.33) return `hsl(${210 + t*3*30}, 80%, 55%)`;  // bleu→vert
+  if (t < 0.66) return `hsl(${120 - (t-0.33)*3*60}, 80%, 50%)`;  // vert→jaune
+  return `hsl(${60 - (t-0.66)*3*30}, 80%, 50%)`;  // jaune→orange
+}
+
+function buildTable() {
+  const table = document.getElementById('polar-table');
+  table.innerHTML = '';
+  const { twa, tws, speeds } = polarData;
+
+  // Header
+  const thead = table.createTHead();
+  const hr = thead.insertRow();
+  const th0 = document.createElement('th'); th0.textContent = 'TWA↓/TWS→'; hr.appendChild(th0);
+  for (const w of tws) {
+    const th = document.createElement('th'); th.textContent = w; hr.appendChild(th);
+  }
+
+  // Body
+  const tbody = table.createTBody();
+  for (let i = 0; i < twa.length; i++) {
+    const tr = tbody.insertRow();
+    const tdTwa = tr.insertCell();
+    tdTwa.textContent = twa[i] + '°';
+    tdTwa.className = 'twa-col';
+    for (let j = 0; j < tws.length; j++) {
+      const td = tr.insertCell();
+      const v = speeds[i][j];
+      td.textContent = v.toFixed(2);
+      td.style.color = speedColor(v);
+      td.setAttribute('contenteditable', 'true');
+      td.dataset.twa = twa[i];
+      td.dataset.tws = tws[j];
+      td.dataset.orig = v.toFixed(2);
+      td.addEventListener('blur', onCellEdit);
+      td.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); td.blur(); } });
+    }
+  }
+}
+
+let pendingChanges = {};
+
+function onCellEdit(e) {
+  const td = e.target;
+  const v = parseFloat(td.textContent);
+  if (isNaN(v) || v < 0 || v > 20) {
+    td.textContent = td.dataset.orig;
+    return;
+  }
+  const orig = parseFloat(td.dataset.orig);
+  if (Math.abs(v - orig) > 0.001) {
+    td.style.color = speedColor(v);
+    td.style.outline = '2px solid var(--accent-warn)';
+    pendingChanges[`${td.dataset.twa}_${td.dataset.tws}`] = {
+      twa: parseFloat(td.dataset.twa), tws: parseFloat(td.dataset.tws), speed: v
+    };
+    document.getElementById('save-status').textContent = `${Object.keys(pendingChanges).length} modification(s) non sauvegardée(s)`;
+  }
+}
+
+async function savePolarChanges() {
+  const changes = Object.values(pendingChanges);
+  if (!changes.length) { showToast('Aucun changement', false); return; }
+  let errors = 0;
+  for (const ch of changes) {
+    const r = await fetch('/api/polars', { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(ch) });
+    if (!r.ok) errors++;
+  }
+  if (errors === 0) {
+    showToast(`${changes.length} valeur(s) sauvegardée(s)`, true);
+    pendingChanges = {};
+    document.getElementById('save-status').textContent = '';
+    // Retirer les surlignages
+    document.querySelectorAll('#polar-table td[contenteditable]').forEach(td => td.style.outline = '');
+    await loadPolars();
+  } else {
+    showToast(`${errors} erreur(s)`, false);
+  }
+}
+
+function exportPolars() { window.location = '/api/polars/export'; }
+
+async function resetPolars() {
+  if (!confirm('Réinitialiser les polaires aux valeurs par défaut ?')) return;
+  const r = await fetch('/api/polars/reset', { method: 'POST' });
+  if (r.ok) { showToast('Polaires réinitialisées', true); pendingChanges = {}; await loadPolars(); }
+  else showToast('Erreur lors du reset', false);
+}
+
+// =============================================================================
+// Calculateur rapide
+// =============================================================================
+async function updateCalc() {
+  const twa = parseInt(document.getElementById('inp-twa').value);
+  const tws = parseInt(document.getElementById('inp-tws').value);
+  document.getElementById('lbl-twa').textContent = twa;
+  document.getElementById('lbl-tws').textContent = tws;
+  try {
+    const r = await fetch(`/api/polars/speed?twa=${twa}&tws=${tws}`);
+    const d = await r.json();
+    const spd = d.boat_speed_kts;
+    document.getElementById('calc-result').textContent = spd.toFixed(2);
+    const vmg = (spd * Math.cos(twa * Math.PI / 180)).toFixed(2);
+    document.getElementById('calc-vmg').textContent = vmg;
+    const allures = ['Debout au vent', 'Près', 'Bon plein', 'Travers', 'Grand largue', 'Largue', 'Vent arrière'];
+    const ai = Math.min(6, Math.floor(twa / 30));
+    document.getElementById('calc-allure').textContent = allures[ai];
+  } catch(e) {}
+}
+
+// =============================================================================
+// Diagramme polaire Canvas
+// =============================================================================
+function drawPolar() {
+  if (!polarData) return;
+  const canvas = document.getElementById('polar-canvas');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  const cx = W / 2, cy = W / 2;  // centre en haut
+  const R = W * 0.44;
+
+  ctx.clearRect(0, 0, W, H);
+
+  // Fond
+  ctx.fillStyle = '#0a1628';
+  ctx.fillRect(0, 0, W, H);
+
+  // Grilles circulaires (vitesses)
+  const speedRings = [2, 4, 6, 8];
+  const maxSpeed = 9;
+  ctx.strokeStyle = 'rgba(45,74,122,0.6)';
+  ctx.lineWidth = 1;
+  for (const s of speedRings) {
+    const r = (s / maxSpeed) * R;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI); // demi-cercle bas (0-180°)
+    ctx.stroke();
+    // Label
+    ctx.fillStyle = 'rgba(148,163,184,0.7)';
+    ctx.font = '10px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText(s + ' kts', cx + r + 2, cy + 12);
+  }
+
+  // Lignes d'angle (30° pas)
+  ctx.strokeStyle = 'rgba(45,74,122,0.5)';
+  for (let a = 0; a <= 180; a += 30) {
+    const rad = (a - 90) * Math.PI / 180;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(cx + Math.sin(a * Math.PI / 180) * R, cy + Math.cos(a * Math.PI / 180) * R);
+    ctx.stroke();
+    // Labels d'angle
+    const lx = cx + Math.sin(a * Math.PI / 180) * (R + 14);
+    const ly = cy + Math.cos(a * Math.PI / 180) * (R + 14);
+    ctx.fillStyle = 'rgba(148,163,184,0.8)';
+    ctx.font = '10px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(a + '°', lx, ly + 4);
+  }
+
+  // Axe vertical (cap au vent)
+  ctx.strokeStyle = 'rgba(96,165,250,0.3)';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([4, 4]);
+  ctx.beginPath(); ctx.moveTo(cx, cy - R - 10); ctx.lineTo(cx, cy + R + 10); ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Courbes polaires pour chaque TWS_DISPLAY
+  const twaBins = polarData.twa;
+  const twsBins = polarData.tws;
+  const speeds = polarData.speeds;
+
+  function getSpeed(twaVal, twsVal) {
+    // Nearest TWA
+    let ti = 0;
+    for (let i = 0; i < twaBins.length; i++) if (Math.abs(twaBins[i] - twaVal) < Math.abs(twaBins[ti] - twaVal)) ti = i;
+    // Nearest TWS
+    let wi = 0;
+    for (let i = 0; i < twsBins.length; i++) if (Math.abs(twsBins[i] - twsVal) < Math.abs(twsBins[wi] - twsVal)) wi = i;
+    return speeds[ti][wi];
+  }
+
+  for (const tws of TWS_DISPLAY) {
+    const color = TWS_COLORS[tws] || '#ffffff';
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.8;
+    ctx.beginPath();
+    let first = true;
+    for (const twa of twaBins) {
+      if (twa < 0 || twa > 180) continue;
+      const spd = getSpeed(twa, tws);
+      const r = (spd / maxSpeed) * R;
+      const x = cx + Math.sin(twa * Math.PI / 180) * r;
+      const y = cy + Math.cos(twa * Math.PI / 180) * r;
+      if (first) { ctx.moveTo(x, y); first = false; } else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+
+    // Label TWS
+    const midTwa = 90;
+    const midSpd = getSpeed(midTwa, tws);
+    const mr = (midSpd / maxSpeed) * R;
+    const mx = cx + Math.sin(midTwa * Math.PI / 180) * mr;
+    const my = cy + Math.cos(midTwa * Math.PI / 180) * mr;
+    ctx.fillStyle = color;
+    ctx.font = 'bold 10px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText(tws + 'kts', mx + 4, my - 4);
+  }
+
+  // Observations superposées
+  if (showObs && observations.length) {
+    ctx.fillStyle = 'rgba(251,191,36,0.8)';
+    for (const obs of observations.slice(0, 300)) {
+      const spd = obs.stw_kts;
+      const twa = obs.twa_deg;
+      if (!spd || !twa || twa < 0 || twa > 180) continue;
+      const r = (spd / maxSpeed) * R;
+      const x = cx + Math.sin(twa * Math.PI / 180) * r;
+      const y = cy + Math.cos(twa * Math.PI / 180) * r;
+      ctx.beginPath();
+      ctx.arc(x, y, 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  // Légende
+  const legendEl = document.getElementById('canvas-legend');
+  legendEl.innerHTML = TWS_DISPLAY.map(w =>
+    `<span style="color:${TWS_COLORS[w] || '#fff'}">&#9632; ${w} kts</span>`
+  ).join(' &nbsp; ');
+}
+
+// Click sur le canvas → calculer vitesse
+document.getElementById('polar-canvas').addEventListener('click', function(e) {
+  if (!polarData) return;
+  const rect = this.getBoundingClientRect();
+  const W = this.width, scale = rect.width / W;
+  const cx = W / 2, cy = W / 2;
+  const R = W * 0.44;
+  const x = (e.clientX - rect.left) / scale - cx;
+  const y = (e.clientY - rect.top) / scale - cy;
+  const r = Math.sqrt(x * x + y * y);
+  const twa = Math.round(Math.atan2(x, y) * 180 / Math.PI);
+  if (twa < 0 || twa > 180 || r > R + 20) return;
+  const spd_vis = (r / R) * 9;
+  document.getElementById('inp-twa').value = Math.min(180, Math.max(0, twa));
+  document.getElementById('inp-tws').value = 15;
+  updateCalc();
+});
+
+function toggleObservations(checked) {
+  showObs = checked;
+  drawPolar();
+}
+
+// =============================================================================
+// Toast
+// =============================================================================
+function showToast(msg, ok) {
+  const t = document.getElementById('toast');
+  t.textContent = (ok ? '✓ ' : '✗ ') + msg;
+  t.className = ok ? 'ok' : 'err';
+  t.style.display = 'block';
+  setTimeout(() => t.style.display = 'none', 3000);
+}
+
+// Init
+init();
+</script>
+{% endblock %}

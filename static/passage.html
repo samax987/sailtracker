@@ -1,0 +1,2058 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SailTracker — Passage Planner</title>
+  <link rel="stylesheet" href="/lib/leaflet.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg:#0d1117; --bg2:#161b22; --bg3:#21262d;
+      --border:rgba(48,54,61,0.8); --accent:#4a9eff; --accent2:#7ecfff;
+      --text:#e6edf3; --text-dim:#8b949e;
+      --green:#3fb950; --orange:#d29922; --red:#f85149;
+      --radius:8px; --font:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+      /* Palette unifiée */
+      --bg-primary:#0a1628; --bg-secondary:#1a2744; --bg-tertiary:#243458;
+      --border-color:#2d4a7a; --text-primary:#e2e8f0; --text-muted:#94a3b8;
+      --accent-good:#4ade80; --accent-warn:#fbbf24; --accent-danger:#f87171;
+      --accent-info:#60a5fa; --accent-wind:#7dd3fc;
+    }
+    /* Departure cards */
+    .dep-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); gap:12px; padding:8px 12px 12px; }
+    .dep-card {
+      background:var(--bg2); border:1px solid var(--border);
+      border-radius:8px; padding:14px; cursor:pointer;
+      transition:border-color 0.2s, transform 0.1s;
+    }
+    .dep-card:hover { border-color:var(--accent-info,#60a5fa); transform:translateY(-1px); }
+    .dep-card.active { border-color:var(--accent-info,#60a5fa); background:rgba(96,165,250,0.07); }
+    .dep-card .card-date { font-size:0.72rem; color:var(--text-dim); margin-bottom:6px; text-transform:capitalize; }
+    .dep-card .card-score { font-size:1.6rem; font-weight:700; line-height:1; margin-bottom:2px; }
+    .dep-card .card-verdict { font-size:0.72rem; font-weight:700; margin-bottom:8px; }
+    .dep-card .card-bar { height:5px; border-radius:3px; margin-bottom:8px; background:rgba(255,255,255,0.1); }
+    .dep-card .card-bar-fill { height:100%; border-radius:3px; transition:width 0.4s; }
+    .dep-card .card-alerts { font-size:0.68rem; color:var(--text-dim); }
+    .dep-card.best { border-color:var(--green); }
+    .dep-card.best .card-date::before { content:⭐ ; }
+    html,body { height:100%; font-family:var(--font); background:var(--bg); color:var(--text); overflow-x:hidden; }
+
+    /* ── Header ── */
+    header {
+      background:var(--bg2); border-bottom:1px solid var(--border);
+      padding:10px 16px; display:flex; align-items:center; gap:12px;
+      flex-wrap:wrap; position:sticky; top:0; z-index:200;
+    }
+    .header-title { font-size:1rem; font-weight:700; color:var(--accent2); white-space:nowrap; }
+    .header-info { display:flex; gap:16px; flex-wrap:wrap; flex:1; }
+    .header-stat { display:flex; flex-direction:column; gap:1px; }
+    .header-stat .label { font-size:0.62rem; color:var(--text-dim); text-transform:uppercase; letter-spacing:.08em; }
+    .header-stat .value { font-size:0.85rem; font-weight:600; }
+    .header-actions { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+    .btn {
+      background:rgba(74,158,255,0.12); border:1px solid rgba(74,158,255,0.35);
+      color:var(--accent2); border-radius:var(--radius); padding:6px 12px;
+      font-size:0.78rem; font-weight:600; cursor:pointer; transition:background 0.2s;
+      font-family:var(--font); text-decoration:none; display:inline-flex; align-items:center; gap:5px;
+    }
+    .btn:hover { background:rgba(74,158,255,0.25); }
+    .btn.danger { background:rgba(248,81,73,0.1); border-color:rgba(248,81,73,0.3); color:var(--red); }
+    .btn.danger:hover { background:rgba(248,81,73,0.2); }
+    select.btn { appearance:none; padding-right:22px;
+      background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%234a9eff'/%3E%3C/svg%3E");
+      background-repeat:no-repeat; background-position:right 7px center; }
+
+    /* ── Status bar ── */
+    #status-bar {
+      display:none; background:rgba(74,158,255,0.07);
+      border-bottom:1px solid rgba(74,158,255,0.2);
+      padding:8px 16px; align-items:center; gap:10px; font-size:0.82rem;
+    }
+    #status-bar.active { display:flex; }
+    #status-bar.ready { background:rgba(63,185,80,0.07); border-color:rgba(63,185,80,0.2); color:var(--green); }
+    #status-bar.error { background:rgba(248,81,73,0.07); border-color:rgba(248,81,73,0.2); color:var(--red); }
+
+    /* ── Route editor panel ── */
+    #route-editor {
+      display:none; background:var(--bg2); border-bottom:2px solid var(--accent);
+      padding:14px 16px;
+    }
+    #route-editor.open { display:block; }
+    .editor-grid {
+      display:grid; grid-template-columns:1fr 1fr; gap:20px; max-width:1400px; margin:0 auto;
+    }
+    @media(max-width:800px) { .editor-grid { grid-template-columns:1fr; } }
+    .editor-section-title {
+      font-size:0.68rem; text-transform:uppercase; letter-spacing:.1em;
+      color:var(--accent); margin-bottom:10px; font-weight:700;
+    }
+    .mode-btns { display:flex; gap:8px; margin-bottom:12px; }
+    .mode-btn {
+      flex:1; padding:8px 10px; border:1px solid var(--border);
+      background:var(--bg3); color:var(--text-dim); border-radius:var(--radius);
+      cursor:pointer; font-family:var(--font); font-size:0.78rem; transition:all 0.2s;
+    }
+    .mode-btn.active { background:rgba(74,158,255,0.18); border-color:var(--accent); color:var(--accent2); }
+    #route-preview-info {
+      font-size:0.75rem; color:var(--text-dim); margin-top:10px;
+      padding:8px 10px; background:var(--bg3); border-radius:6px; min-height:28px;
+    }
+    .form-grid { display:grid; grid-template-columns:auto 1fr; gap:6px 12px; align-items:center; }
+    .form-grid label { font-size:0.74rem; color:var(--text-dim); white-space:nowrap; }
+    input[type="text"], input[type="number"] {
+      background:var(--bg3); border:1px solid var(--border); color:var(--text);
+      border-radius:6px; padding:7px 9px; font-family:var(--font); font-size:0.8rem; width:100%;
+    }
+    input:focus { outline:none; border-color:var(--accent); }
+    input::placeholder { color:var(--text-dim); }
+    .editor-actions { display:flex; gap:8px; margin-top:14px; }
+
+    /* ── Map click indicator ── */
+    #map-click-overlay {
+      display:none; position:absolute; top:10px; left:50%; transform:translateX(-50%);
+      z-index:500; background:rgba(13,17,23,0.88); border:1px solid var(--accent);
+      border-radius:20px; padding:6px 14px; font-size:0.8rem; color:var(--accent2);
+      pointer-events:none; white-space:nowrap;
+    }
+
+    /* ── Main layout ── */
+    .main-layout {
+      display:grid; grid-template-columns:1fr 1fr;
+      grid-template-rows:380px auto auto; gap:10px; padding:10px;
+      max-width:1600px; margin:0 auto;
+    }
+    @media(max-width:900px) { .main-layout { grid-template-columns:1fr; grid-template-rows:auto; } }
+    .section { background:var(--bg2); border:1px solid var(--border); border-radius:var(--radius); overflow:hidden; }
+    .section-header {
+      padding:9px 13px; border-bottom:1px solid var(--border);
+      display:flex; align-items:center; justify-content:space-between;
+    }
+    .section-title { font-size:0.72rem; font-weight:700; text-transform:uppercase; letter-spacing:.1em; color:var(--accent); }
+    .section-meta { font-size:0.68rem; color:var(--text-dim); }
+
+    /* ── Carte ── */
+    .map-section { grid-column:1; grid-row:1; position:relative; }
+    #map { height:100%; min-height:340px; }
+    .wp-legend { padding:7px 13px; display:flex; gap:10px; flex-wrap:wrap; font-size:0.68rem; color:var(--text-dim); border-top:1px solid var(--border); }
+    .wp-legend-item { display:flex; align-items:center; gap:4px; }
+    .wp-dot { width:9px; height:9px; border-radius:50%; border:2px solid rgba(255,255,255,.3); }
+
+    /* ── Graphique ── */
+    .chart-section { grid-column:2; grid-row:1; display:flex; flex-direction:column; }
+    .chart-wrapper { flex:1; position:relative; padding:8px; min-height:0; }
+
+    /* ── Tableau ── */
+    .table-section { grid-column:1 / -1; grid-row:2; }
+    .table-wrapper { overflow-x:auto; max-height:420px; overflow-y:auto; }
+    table { width:100%; border-collapse:collapse; font-size:0.82rem; }
+    thead th {
+      background:var(--bg3); color:var(--text-dim); font-size:0.68rem; font-weight:600;
+      text-transform:uppercase; letter-spacing:.08em; padding:9px 12px; text-align:left;
+      position:sticky; top:0; z-index:1; border-bottom:1px solid var(--border);
+    }
+    tbody tr { border-bottom:1px solid rgba(48,54,61,.5); cursor:pointer; transition:background .15s; }
+    tbody tr:hover { background:rgba(74,158,255,.06); }
+    tbody tr.selected { background:rgba(74,158,255,.12); }
+    tbody tr.best-row { background:rgba(63,185,80,.07); }
+    tbody tr.best-row.selected { background:rgba(63,185,80,.17); }
+    td { padding:9px 12px; vertical-align:middle; }
+    .score-bar { display:flex; align-items:center; gap:8px; }
+    .score-track { flex:1; height:6px; background:var(--bg3); border-radius:3px; overflow:hidden; min-width:50px; }
+    .score-fill { height:100%; border-radius:3px; transition:width .4s; }
+    .score-fill.green { background:var(--green); } .score-fill.orange { background:var(--orange); } .score-fill.red { background:var(--red); }
+    .score-num { font-weight:700; font-size:0.86rem; min-width:30px; text-align:right; }
+    .verdict { display:inline-flex; align-items:center; gap:3px; padding:2px 9px; border-radius:20px; font-size:0.7rem; font-weight:700; letter-spacing:.04em; }
+    .verdict.go { background:rgba(63,185,80,.15); color:var(--green); border:1px solid rgba(63,185,80,.4); }
+    .verdict.attention { background:rgba(210,153,34,.15); color:var(--orange); border:1px solid rgba(210,153,34,.4); }
+    .verdict.nogo { background:rgba(248,81,73,.1); color:var(--red); border:1px solid rgba(248,81,73,.3); }
+
+    /* ── Détail ── */
+    .detail-section { grid-column:1 / -1; grid-row:3; }
+    .detail-content { padding:12px; display:none; }
+    .detail-content.visible { display:block; }
+    .alerts-list { display:flex; flex-direction:column; gap:5px; margin-top:8px; }
+    .alert-item { background:rgba(210,153,34,.1); border:1px solid rgba(210,153,34,.25); border-radius:6px; padding:5px 11px; font-size:0.78rem; color:var(--orange); }
+
+    /* ── Empty / spinner ── */
+    .empty-state { display:flex; flex-direction:column; align-items:center; justify-content:center; height:180px; gap:8px; color:var(--text-dim); font-size:0.83rem; }
+    .spinner { width:28px; height:28px; border:3px solid rgba(74,158,255,.2); border-top-color:var(--accent); border-radius:50%; animation:spin .8s linear infinite; }
+    @keyframes spin { to { transform:rotate(360deg); } }
+    #refresh-indicator { display:none; font-size:0.72rem; color:var(--text-dim); align-items:center; gap:6px; }
+    #refresh-indicator.active { display:flex; }
+
+    /* ── Flèches vent ── */
+    .wind-arrow { background:none !important; border:none !important; pointer-events:none !important; cursor:default !important; }
+
+    /* ── Slider temporel ── */
+    .wind-time-slider-panel {
+      position:absolute; bottom:44px; left:50%; transform:translateX(-50%);
+      z-index:500; background:rgba(10,22,40,0.88); border:1px solid rgba(45,74,122,0.7);
+      border-radius:8px; padding:6px 12px; display:flex; align-items:center; gap:10px;
+      pointer-events:all;
+    }
+    .wind-time-slider-panel input[type=range] { width:200px; accent-color:#60a5fa; }
+    #wind-time-label { font-size:0.75rem; color:#94a3b8; min-width:140px; }
+
+    /* ── Briefing ── */
+    .briefing-section { grid-column:1 / -1; }
+    .briefing-summary {
+      font-size:.9rem; line-height:1.6; padding:10px 12px;
+      background:rgba(96,165,250,.07); border-left:3px solid #60a5fa;
+      border-radius:0 6px 6px 0; margin:8px 12px;
+    }
+    .briefing-phases {
+      display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr));
+      gap:8px; margin:8px 12px;
+    }
+    .phase-card {
+      background:var(--bg3); border:1px solid var(--border);
+      border-radius:6px; padding:10px;
+    }
+    .phase-header { display:flex; justify-content:space-between; margin-bottom:5px; }
+    .phase-name { font-weight:600; color:#60a5fa; font-size:.8rem; }
+    .phase-range { font-size:.7rem; color:var(--text-dim); font-family:monospace; }
+    .phase-text { font-size:.82rem; line-height:1.5; color:var(--text-dim); }
+    .briefing-alerts { padding:0 12px 10px; }
+    .briefing-alerts-title {
+      font-size:.72rem; font-weight:700; color:var(--orange);
+      text-transform:uppercase; letter-spacing:.08em; margin-bottom:4px;
+    }
+    .briefing-alerts .alert-item {
+      padding:5px 10px; margin:3px 0;
+      background:rgba(251,191,36,.08); border-left:3px solid var(--orange);
+      border-radius:0 5px 5px 0; font-size:.82rem;
+    }
+
+    /* ── Légende vent ── */
+    .wind-legend {
+      position:absolute; bottom:100px; left:8px; z-index:500;
+      background:rgba(10,22,40,0.88); border:1px solid rgba(45,74,122,0.7);
+      border-radius:8px; padding:8px 10px; font-size:.7rem; pointer-events:none;
+    }
+    .legend-title {
+      color:#94a3b8; font-weight:700; text-transform:uppercase;
+      letter-spacing:.08em; margin-bottom:5px;
+    }
+    .legend-item { display:flex; align-items:center; gap:6px; margin:2px 0; color:#e2e8f0; }
+    .legend-dot { width:10px; height:10px; border-radius:50%; flex-shrink:0; }
+  </style>
+</head>
+<body>
+
+<!-- ── Header ── -->
+<header>
+  <div class="header-title">&#x26F5; Passage Planner</div>
+
+  <!-- Sélecteur de route -->
+  <div style="display:flex;gap:8px;align-items:center">
+    <select id="route-select" class="btn" style="min-width:190px;max-width:260px">
+      <option value="">Chargement&hellip;</option>
+    </select>
+    <button class="btn" id="btn-new-route" title="Définir une nouvelle route">+ Nouvelle</button>
+    <button class="btn" id="btn-import-gpx" title="Importer un fichier GPX">&#x1F4E5; GPX</button>
+    <input type="file" id="gpx-file-input" accept=".gpx" style="display:none" />
+    <button class="btn" id="btn-edit-route" title="Modifier les waypoints de la route">&#x270F;&#xFE0F;</button>
+    <button class="btn" id="btn-rename-route" title="Renommer la route" style="padding:4px 9px;font-size:0.78rem">&#x1F3F7; Renommer</button>
+  </div>
+
+  <div class="header-info">
+    <div class="header-stat"><span class="label">Distance</span><span class="value" id="h-distance">—</span></div>
+    <div class="header-stat"><span class="label" id="h-duration-label">Durée estimée</span><span class="value" id="h-duration">—</span></div>
+    <div class="header-stat"><span class="label">Dernière mise à jour</span><span class="value" id="h-last-update">—</span></div>
+  </div>
+
+  <div class="header-actions">
+    <div id="refresh-indicator"><div class="spinner" style="width:14px;height:14px;border-width:2px"></div>Actualisation&hellip;</div>
+    <button class="btn" id="btn-refresh">&#x21BB; Actualiser</button>
+    <button class="btn" id="btn-wind-arrows" style="padding:4px 10px;font-size:0.75rem" title="Afficher/masquer les flèches vent GRIB">&#x1F4A8; Vent</button>
+    <button class="btn danger" id="btn-delete-route" style="padding:4px 10px;font-size:0.75rem" title="Supprimer la route sélectionnée">&#x1F5D1; Supprimer</button>
+    <button class="btn" id="btn-optimize" style="padding:4px 10px;font-size:0.75rem;background:rgba(74,222,128,0.12);border-color:rgba(74,222,128,0.35);color:#4ade80" title="Routage isochrones — calcule la route optimale selon le vent prévu et les polaires">&#x26A1; Optimiser</button>
+    <a href="/" class="btn">&#x2190; Carte</a>
+    <a href="/accuracy" class="btn" style="font-size:0.75rem">&#x1F4CA; Modèles</a>
+    <a href="/passage/lite" class="btn" style="font-size:0.75rem">&#x1F4E1; Lite</a>
+    <a href="/polars" class="btn" style="font-size:0.75rem">&#x1F6A4; Polaires</a>
+  </div>
+</header>
+
+<!-- ── Modal Optimiser ── -->
+<div id="modal-optimize" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:1000;align-items:center;justify-content:center">
+  <div style="background:#1a2744;border:1px solid #2d4a7a;border-radius:12px;padding:24px;min-width:340px;max-width:460px">
+    <h3 style="font-size:0.95rem;margin-bottom:16px;color:#7dd3fc">&#x26A1; Routage par isochrones</h3>
+    <p style="font-size:0.78rem;color:#94a3b8;margin-bottom:14px">Calcule la route optimale selon le vent GRIB prévu et les polaires POLLEN 1. Durée : 10–60 secondes.</p>
+    <label style="font-size:0.76rem;color:#94a3b8">Date/heure de départ (UTC)</label>
+    <input type="datetime-local" id="opt-departure"
+      style="width:100%;margin:6px 0 16px;background:#243458;border:1px solid #2d4a7a;color:#e2e8f0;border-radius:6px;padding:7px 10px;font-size:0.85rem">
+    <div id="opt-progress" style="display:none;margin-bottom:12px">
+      <div style="background:#0a1628;border-radius:4px;height:8px;overflow:hidden;margin-bottom:6px">
+        <div id="opt-progress-bar" style="height:100%;background:#4ade80;width:0%;transition:width 0.5s"></div>
+      </div>
+      <span id="opt-progress-text" style="font-size:0.72rem;color:#94a3b8">Calcul en cours…</span>
+    </div>
+    <div id="opt-error" style="display:none;font-size:0.76rem;color:#f87171;margin-bottom:12px"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn" onclick="closeOptimizeModal()">Annuler</button>
+      <button class="btn" id="opt-btn-run" onclick="runOptimize()"
+        style="background:rgba(74,222,128,0.15);border-color:rgba(74,222,128,0.4);color:#4ade80">&#x25B6; Lancer</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Panneau résultat optimisation ── -->
+<div id="optimize-result-panel" style="display:none;background:#1a2744;border:1px solid #2d4a7a;border-top:2px solid #4ade80;padding:10px 16px;font-size:0.78rem">
+  <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+    <span style="color:#4ade80;font-weight:700">&#x26A1; Route optimale calculée</span>
+    <span>Distance directe : <b id="res-direct">—</b> NM</span>
+    <span>Durée estimée : <b id="res-duration">—</b>h</span>
+    <span>ETA : <b id="res-eta">—</b></span>
+    <label style="display:flex;align-items:center;gap:5px;cursor:pointer">
+      <input type="checkbox" id="chk-isochrones" checked onchange="toggleIsochrones(this.checked)"> Isochrones
+    </label>
+    <button class="btn" onclick="clearOptimize()" style="padding:3px 8px;font-size:0.7rem">&#x2715; Effacer</button>
+  </div>
+</div>
+
+<!-- ── Barre de statut calcul ── -->
+<div id="status-bar">
+  <div id="status-icon"></div>
+  <span id="status-text"></span>
+  <span id="status-elapsed" style="color:var(--text-dim);font-size:0.72rem;margin-left:4px"></span>
+</div>
+
+<!-- ── Éditeur de route ── -->
+<div id="route-editor">
+  <div class="editor-grid">
+    <!-- Colonne gauche : waypoints -->
+    <div>
+      <div class="editor-section-title">1. Ajouter des waypoints sur la carte</div>
+      <div class="mode-btns">
+        <button class="mode-btn active" id="btn-mode-add-wp">&#x2795; Ajouter un waypoint</button>
+        <button class="mode-btn" id="btn-mode-stop" style="flex:0.4">&#x2716; Stop</button>
+      </div>
+      <div id="wp-editor-list" style="min-height:48px;max-height:210px;overflow-y:auto;margin-bottom:8px;display:flex;flex-direction:column;gap:4px"></div>
+      <div style="display:flex;gap:6px;margin-bottom:8px">
+        <button class="btn" id="btn-remove-last-wp" style="font-size:0.72rem;padding:4px 10px">&#x232B; Supprimer dernier</button>
+        <button class="btn danger" id="btn-clear-all-wp" style="font-size:0.72rem;padding:4px 10px">&#x1F5D1; Tout effacer</button>
+      </div>
+      <div id="route-preview-info">Cliquez sur la carte pour ajouter des waypoints (min. 2).</div>
+    </div>
+
+    <!-- Colonne droite : paramètres -->
+    <div>
+      <div class="editor-section-title">2. Paramètres de la traversée</div>
+      <div class="form-grid">
+        <label>Nom de la route</label>
+        <input type="text" id="route-name" placeholder="Cap-Vert &#x2192; Barbade" />
+        <label>Vitesse moy. (noeuds)</label>
+        <input type="number" id="route-speed" value="6.0" step="0.5" min="2" max="20" />
+        <label>Vent max autorisé (noeuds)</label>
+        <input type="number" id="route-max-wind" value="30" step="1" min="10" max="60" />
+        <label>Vagues max (m)</label>
+        <input type="number" id="route-max-wave" value="3.0" step="0.5" min="0.5" max="8" />
+        <label>Houle max (m)</label>
+        <input type="number" id="route-max-swell" value="3.5" step="0.5" min="0.5" max="8" />
+        <label>Espacement WP auto (NM)</label>
+        <input type="number" id="route-spacing" value="250" step="50" min="100" max="500" oninput="updatePreview()" />
+      </div>
+      <div class="editor-actions">
+        <button class="btn" id="btn-create-route" style="flex:1;justify-content:center">&#x26A1; Créer et lancer le calcul</button>
+        <button class="btn danger" id="btn-cancel-edit">Annuler</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Layout principal ── -->
+<div class="main-layout">
+
+  <!-- Carte -->
+  <div class="section map-section">
+    <div class="section-header">
+      <span class="section-title">&#x1F5FA; Route &amp; Conditions</span>
+      <div style="display:flex;align-items:center;gap:8px">
+        <button class="btn" id="btn-toggle-currents" style="padding:4px 9px;font-size:0.7rem" title="Afficher/masquer les flèches de courant">&#x1F30A; Courants</button>
+        <button class="btn" id="btn-toggle-wind" style="padding:4px 9px;font-size:0.7rem;opacity:0.6" title="Overlay vent GFS animé">&#x1F4A8; Vent GFS</button>
+        <select id="grib-time-select" class="btn" style="display:none;padding:4px 9px;font-size:0.7rem"></select>
+        <span class="section-meta" id="map-meta">Sélectionner un jour pour mettre à jour</span>
+      </div>
+    </div>
+    <div id="map" style="position:relative">
+      <div id="map-click-overlay">&#x1F4CD; Cliquer sur la carte pour ajouter un <strong id="map-click-label">waypoint</strong></div>
+      <!-- Slider temporel vent -->
+      <div class="wind-time-slider-panel" id="wind-slider-panel">
+        <span class="slider-label" style="font-size:.75rem;color:#94a3b8">&#x1F4A8;</span>
+        <input type="range" id="wind-time-slider" min="0" max="11" step="1" value="0">
+        <span id="wind-time-label">—</span>
+      </div>
+      <!-- Légende vent -->
+      <div class="wind-legend" id="wind-legend">
+        <div class="legend-title">Vent (nœuds)</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#3b82f6"></div>&lt; 10</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#22c55e"></div>10–15</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#eab308"></div>15–20</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#f97316"></div>20–25</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#ef4444"></div>25–30</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#a855f7"></div>30+</div>
+      </div>
+    </div>
+    <div class="wp-legend" id="wp-legend"></div>
+    <div id="current-info" style="padding:7px 13px;border-top:1px solid var(--border);font-size:0.72rem;color:var(--text-dim);display:none">
+      &#x1F30A; Courant moyen route : <span id="ci-speed">—</span> nds (<span id="ci-dir">—</span>) — <span id="ci-effect" style="font-weight:600">—</span>
+    </div>
+  </div>
+
+  <!-- Graphique -->
+  <div class="section chart-section">
+    <div class="section-header">
+      <span class="section-title">&#x1F4CA; Prévisions vent (multi-modèles)</span>
+      <span class="section-meta" id="chart-meta">—</span>
+      <label style="display:flex;align-items:center;gap:4px;font-size:0.7rem;color:var(--text-dim);cursor:pointer" title="Afficher les 51 membres ECMWF (spaghetti)">
+        <input type="checkbox" id="cb-show-members" style="accent-color:var(--accent)"> Ensemble
+      </label>
+    </div>
+    <div class="chart-wrapper"><canvas id="wind-chart"></canvas></div>
+    <div id="ensemble-reliability" style="padding:5px 12px;font-size:0.72rem;color:var(--text-dim);border-top:1px solid var(--border);display:none"></div>
+  </div>
+
+  <!-- Tableau -->
+  <div class="section table-section">
+    <div class="section-header">
+      <span class="section-title">&#x1F4C5; Departure Planner — 15 jours</span>
+      <span class="section-meta" id="table-meta">—</span>
+    </div>
+    <div id="sims-cards" class="dep-grid"><div class="empty-state"><div class="spinner"></div><span>Chargement&hellip;</span></div></div>
+  </div>
+  <!-- Détail -->
+  <div class="section detail-section">
+    <div class="section-header">
+      <span class="section-title" id="detail-title">Détails du départ sélectionné</span>
+    </div>
+    <div class="detail-content" id="detail-content">
+      <div class="alerts-list" id="detail-alerts"></div>
+    </div>
+  </div>
+
+  <!-- Briefing météo -->
+  <div class="section briefing-section" id="briefing-panel">
+    <div class="section-header">
+      <span class="section-title">&#x1F4CB; Briefing météo</span>
+      <span class="section-meta" id="briefing-meta">—</span>
+    </div>
+    <div class="briefing-summary" id="briefing-summary">Chargement&hellip;</div>
+    <div class="briefing-phases" id="briefing-phases"></div>
+    <div class="briefing-alerts" id="briefing-alerts"></div>
+  </div>
+
+</div>
+
+<script src="/lib/leaflet.js"></script>
+<script src="/lib/leaflet-velocity.min.js"></script>
+<script>
+// =============================================================================
+// État global
+// =============================================================================
+let routeId = null;
+let windArrowLayer = null;
+let windArrowsVisible = true;
+let gribAvailableTimes = [];
+let windSliderDebounce = null;
+let routeInfo = null;
+let forecastData = null;
+let departureData = null;
+let windChart = null;
+let map, routeLine, wpMarkers = [];
+let selectedSimIdx = null;
+let allRoutes = [];
+
+// État éditeur
+let editorOpen = false;
+let clickMode = null;        // 'waypoint' | null
+let manualWaypoints = [];    // [{ lat, lon, name }, ...]
+let editorLine = null;
+let previewWpMarkers = [];
+
+// Courants
+let currentArrowsGroup = null;
+let currentArrowsVisible = true;
+
+// Polling
+let statusPollInterval = null;
+let statusPollStart = null;
+
+// =============================================================================
+// Utilitaires
+// =============================================================================
+const toRad = x => x * Math.PI / 180;
+const toDeg = x => x * 180 / Math.PI;
+
+function haversineNm(la1, lo1, la2, lo2) {
+  const R = 3440.065;
+  const phi1 = toRad(la1), phi2 = toRad(la2);
+  const dphi = toRad(la2 - la1), dlon = toRad(lo2 - lo1);
+  const a = Math.sin(dphi/2)**2 + Math.cos(phi1)*Math.cos(phi2)*Math.sin(dlon/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function greatCircleWaypoints(lat1, lon1, name1, lat2, lon2, name2, spacingNm = 250) {
+  const totalNm = haversineNm(lat1, lon1, lat2, lon2);
+  const nSeg = Math.max(1, Math.round(totalNm / spacingNm));
+  const la1r = toRad(lat1), lo1r = toRad(lon1);
+  const la2r = toRad(lat2), lo2r = toRad(lon2);
+  const d = 2 * Math.asin(Math.sqrt(
+    Math.sin((la2r - la1r) / 2)**2 +
+    Math.cos(la1r) * Math.cos(la2r) * Math.sin((lo2r - lo1r) / 2)**2
+  ));
+  const wps = [{ lat: lat1, lon: lon1, name: name1 }];
+  for (let i = 1; i < nSeg; i++) {
+    const f = i / nSeg;
+    let wlat, wlon;
+    if (Math.abs(d) < 1e-10) { wlat = lat1; wlon = lon1; }
+    else {
+      const A = Math.sin((1 - f) * d) / Math.sin(d);
+      const B = Math.sin(f * d) / Math.sin(d);
+      const x = A*Math.cos(la1r)*Math.cos(lo1r) + B*Math.cos(la2r)*Math.cos(lo2r);
+      const y = A*Math.cos(la1r)*Math.sin(lo1r) + B*Math.cos(la2r)*Math.sin(lo2r);
+      const z = A*Math.sin(la1r) + B*Math.sin(la2r);
+      wlat = toDeg(Math.atan2(z, Math.sqrt(x*x + y*y)));
+      wlon = toDeg(Math.atan2(y, x));
+    }
+    wps.push({ lat: +wlat.toFixed(4), lon: +wlon.toFixed(4), name: `WP${i}` });
+  }
+  wps.push({ lat: lat2, lon: lon2, name: name2 });
+  return { waypoints: wps, totalNm };
+}
+
+function scoreClass(s) {
+  return s >= 70 ? 'green' : s >= 45 ? 'orange' : 'red';
+}
+function scoreColor(s) {
+  return s >= 70 ? '#3fb950' : s >= 45 ? '#d29922' : '#f85149';
+}
+function timeAgo(isoStr) {
+  if (!isoStr) return '—';
+  const diff = Date.now() - new Date(isoStr).getTime();
+  const m = Math.floor(diff / 60000);
+  if (m < 1) return "à l'instant";
+  if (m < 60) return `il y a ${m} min`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `il y a ${h}h${String(m % 60).padStart(2,'0')}`;
+  return `il y a ${Math.floor(h / 24)}j`;
+}
+
+// =============================================================================
+// Carte Leaflet
+// =============================================================================
+function initMap() {
+  map = L.map('map', { center:[14.5,-42], zoom:3, zoomControl:false, attributionControl:false });
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom:18 }).addTo(map);
+  L.control.zoom({ position:'bottomright' }).addTo(map);
+
+  const overlay = document.getElementById('map-click-overlay');
+  map.getContainer().appendChild(overlay);
+
+  map.on('click', onMapClick);
+}
+
+function onMapClick(e) {
+  if (!editorOpen || clickMode !== 'waypoint') return;
+  const { lat, lng } = e.latlng;
+  addManualWaypoint(lat, lng);
+}
+
+// =============================================================================
+// Éditeur de route — waypoints multiples
+// =============================================================================
+function addManualWaypoint(lat, lng, name) {
+  const idx = manualWaypoints.length;
+  // Le nouveau point devient "Arrivée" ; le précédent perd ce label s'il l'avait
+  if (idx > 0 && manualWaypoints[idx - 1].name === 'Arrivée') {
+    manualWaypoints[idx - 1].name = `WP${idx - 1}`;
+  }
+  const wpName = name || (idx === 0 ? 'Départ' : 'Arrivée');
+  manualWaypoints.push({ lat: +lat.toFixed(5), lon: +lng.toFixed(5), name: wpName });
+  renderWaypointList();
+  updatePreview();
+}
+
+function removeWaypoint(idx) {
+  manualWaypoints.splice(idx, 1);
+  renderWaypointList();
+  updatePreview();
+}
+
+function removeLastWaypoint() {
+  if (manualWaypoints.length > 0) {
+    manualWaypoints.pop();
+    renderWaypointList();
+    updatePreview();
+  }
+}
+
+function clearAllWaypoints() {
+  manualWaypoints = [];
+  renderWaypointList();
+  updatePreview();
+}
+
+function renderWaypointList() {
+  const container = document.getElementById('wp-editor-list');
+  container.innerHTML = '';
+  const n = manualWaypoints.length;
+  manualWaypoints.forEach((wp, i) => {
+    const color = i === 0 ? 'var(--green)' : i === n - 1 && n > 1 ? 'var(--red)' : 'var(--orange)';
+    const label = i === 0 ? 'Départ' : (i === n - 1 && n > 1) ? 'Arrivée' : 'WP' + i;
+    const div = document.createElement('div');
+    div.style.cssText = 'display:flex;align-items:center;gap:6px;padding:4px 8px;background:var(--bg3);border-radius:5px;font-size:0.74rem';
+    div.innerHTML =
+      '<span style="color:' + color + ';font-weight:700;min-width:54px">' + label + '</span>' +
+      '<input type="text" value="' + (wp.name || '').replace(/"/g, '&quot;') + '" placeholder="Nom" style="flex:1;font-size:0.72rem;padding:3px 6px" data-idx="' + i + '" class="wp-name-input" />' +
+      '<span style="color:var(--text-dim);font-size:0.65rem;white-space:nowrap">' + wp.lat.toFixed(2) + '&#176;, ' + wp.lon.toFixed(2) + '&#176;</span>' +
+      '<button onclick="removeWaypoint(' + i + ')" style="background:none;border:none;cursor:pointer;color:var(--red);font-size:0.82rem;padding:0 4px;line-height:1">&#x2715;</button>';
+    container.appendChild(div);
+  });
+  container.querySelectorAll('.wp-name-input').forEach(inp => {
+    inp.addEventListener('input', function() {
+      manualWaypoints[parseInt(this.dataset.idx)].name = this.value;
+    });
+  });
+}
+
+function setClickMode(mode) {
+  clickMode = mode;
+  document.getElementById('btn-mode-add-wp').classList.toggle('active', mode === 'waypoint');
+  document.getElementById('btn-mode-stop').classList.toggle('active', mode === null);
+  const overlay = document.getElementById('map-click-overlay');
+  if (mode === 'waypoint') {
+    overlay.style.display = 'block';
+    map.getContainer().style.cursor = 'crosshair';
+  } else {
+    overlay.style.display = 'none';
+    map.getContainer().style.cursor = '';
+  }
+}
+
+function toggleEditor(open, forceEmpty = false) {
+  editorOpen = open;
+  document.getElementById('route-editor').classList.toggle('open', open);
+  if (open) {
+    setClickMode('waypoint');
+    // En mode édition d'une route existante (pas forceEmpty), pré-remplir depuis routeInfo
+    if (!forceEmpty && manualWaypoints.length === 0 && routeInfo && routeInfo.waypoints) {
+      const wps = routeInfo.waypoints;
+      manualWaypoints = [
+        { lat: wps[0].lat, lon: wps[0].lon, name: wps[0].name || 'Départ' },
+        { lat: wps[wps.length - 1].lat, lon: wps[wps.length - 1].lon, name: wps[wps.length - 1].name || 'Arrivée' },
+      ];
+      document.getElementById('route-name').value = routeInfo.name || '';
+      document.getElementById('route-speed').value = routeInfo.boat_speed_avg_knots || 6;
+      document.getElementById('route-max-wind').value = routeInfo.max_wind_knots || 30;
+      document.getElementById('route-max-wave').value = routeInfo.max_wave_m || 3;
+      document.getElementById('route-max-swell').value = routeInfo.max_swell_m || 3.5;
+    }
+    renderWaypointList();
+    updatePreview();
+  } else {
+    setClickMode(null);
+    if (editorLine) { map.removeLayer(editorLine); editorLine = null; }
+    previewWpMarkers.forEach(m => map.removeLayer(m));
+    previewWpMarkers = [];
+  }
+}
+
+function updatePreview() {
+  if (editorLine) { map.removeLayer(editorLine); editorLine = null; }
+  previewWpMarkers.forEach(m => map.removeLayer(m));
+  previewWpMarkers = [];
+
+  if (manualWaypoints.length < 2) {
+    document.getElementById('route-preview-info').textContent =
+      manualWaypoints.length === 0
+        ? 'Cliquez sur la carte pour ajouter des waypoints (min. 2).'
+        : '1 waypoint ajouté — cliquez pour ajouter l\'arrivée.';
+    return;
+  }
+
+  const spacing = parseFloat(document.getElementById('route-spacing').value) || 250;
+  const speed = parseFloat(document.getElementById('route-speed').value) || 6;
+
+  let allWps = [];
+  let totalNm = 0;
+  for (let i = 0; i < manualWaypoints.length - 1; i++) {
+    const wp1 = manualWaypoints[i];
+    const wp2 = manualWaypoints[i + 1];
+    const { waypoints: segWps, totalNm: segNm } = greatCircleWaypoints(
+      wp1.lat, wp1.lon, wp1.name,
+      wp2.lat, wp2.lon, wp2.name,
+      spacing
+    );
+    totalNm += segNm;
+    if (i === 0) allWps = segWps;
+    else allWps = allWps.concat(segWps.slice(1));
+  }
+
+  const latlngs = allWps.map(wp => [wp.lat, wp.lon]);
+  editorLine = L.polyline(latlngs, { color:'#f0a030', weight:2.5, dashArray:'8 5', opacity:.85 }).addTo(map);
+
+  // Draw manual waypoints as draggable markers
+  manualWaypoints.forEach((wp, i) => {
+    const color = i === 0 ? '#3fb950' : i === manualWaypoints.length - 1 ? '#f85149' : '#f0a030';
+    const sz = (i === 0 || i === manualWaypoints.length - 1) ? 20 : 16;
+    const icon = L.divIcon({
+      className: '',
+      html: `<div style="width:${sz}px;height:${sz}px;border-radius:50%;background:${color};border:2.5px solid #fff;cursor:grab;box-shadow:0 1px 5px rgba(0,0,0,0.6)"></div>`,
+      iconSize: [sz, sz],
+      iconAnchor: [sz/2, sz/2]
+    });
+    const m = L.marker([wp.lat, wp.lon], { icon, draggable: true, zIndexOffset: 2000 })
+      .addTo(map)
+      .bindTooltip((wp.name || 'WP' + i) + ' — glisser pour déplacer', { permanent: false });
+    m.on('drag', function() {
+      // Mettre à jour la polyligne en temps réel
+      const pos = m.getLatLng();
+      manualWaypoints[i] = { ...manualWaypoints[i], lat: +pos.lat.toFixed(5), lon: +pos.lng.toFixed(5) };
+      // Recalculer la prévisualisation (ligne seulement, sans recréer les marqueurs)
+      if (editorLine) map.removeLayer(editorLine);
+      let allWps2 = [];
+      const spacing2 = parseFloat(document.getElementById('route-spacing').value) || 250;
+      for (let j = 0; j < manualWaypoints.length - 1; j++) {
+        const { waypoints: seg } = greatCircleWaypoints(
+          manualWaypoints[j].lat, manualWaypoints[j].lon, manualWaypoints[j].name,
+          manualWaypoints[j+1].lat, manualWaypoints[j+1].lon, manualWaypoints[j+1].name, spacing2);
+        allWps2 = j === 0 ? seg : allWps2.concat(seg.slice(1));
+      }
+      editorLine = L.polyline(allWps2.map(w => [w.lat, w.lon]), { color:'#f0a030', weight:2.5, dashArray:'8 5', opacity:.85 }).addTo(map);
+    });
+    m.on('dragend', function() {
+      const pos = m.getLatLng();
+      manualWaypoints[i] = { ...manualWaypoints[i], lat: +pos.lat.toFixed(5), lon: +pos.lng.toFixed(5) };
+      renderWaypointList();
+      updatePreview();
+    });
+    previewWpMarkers.push(m);
+  });
+
+  // Draw auto intermediate waypoints (smaller, dim)
+  const manualSet = new Set(manualWaypoints.map(w => w.lat.toFixed(4) + ',' + w.lon.toFixed(4)));
+  allWps.slice(1, -1).forEach(wp => {
+    if (!manualSet.has(wp.lat.toFixed(4) + ',' + wp.lon.toFixed(4))) {
+      const m = L.circleMarker([wp.lat, wp.lon], {
+        radius: 4, fillColor: '#f0a030', color: '#fff', weight: 1, fillOpacity: .6
+      }).addTo(map);
+      previewWpMarkers.push(m);
+    }
+  });
+
+  const days = (totalNm / speed / 24).toFixed(1);
+  document.getElementById('route-preview-info').textContent =
+    'Distance : ' + Math.round(totalNm) + ' NM  \u2022  ~' + days + ' jours  \u2022  ' +
+    allWps.length + ' WPs (' + manualWaypoints.length + ' manuels, espacement ' + Math.round(spacing) + ' NM)';
+
+  const nameInput = document.getElementById('route-name');
+  if (!nameInput.value) {
+    nameInput.value = manualWaypoints[0].name + ' \u2192 ' + manualWaypoints[manualWaypoints.length - 1].name;
+  }
+  if (latlngs.length > 0) map.fitBounds(L.latLngBounds(latlngs), { padding: [30, 30] });
+}
+
+async function createRoute() {
+  if (manualWaypoints.length < 2) {
+    alert('Veuillez ajouter au moins 2 waypoints sur la carte.');
+    return;
+  }
+  const body = {
+    waypoints: manualWaypoints,
+    name: document.getElementById('route-name').value,
+    boat_speed_avg_knots: parseFloat(document.getElementById('route-speed').value),
+    max_wind_knots: parseFloat(document.getElementById('route-max-wind').value),
+    max_wave_m: parseFloat(document.getElementById('route-max-wave').value),
+    max_swell_m: parseFloat(document.getElementById('route-max-swell').value),
+    waypoint_spacing_nm: parseFloat(document.getElementById('route-spacing').value),
+  };
+
+  const btn = document.getElementById('btn-create-route');
+  btn.disabled = true;
+  btn.textContent = 'Création en cours\u2026';
+
+  try {
+    const resp = await fetch('/api/routes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!resp.ok) {
+      const err = await resp.json();
+      alert('Erreur : ' + (err.error || 'Inconnue'));
+      return;
+    }
+    const newRoute = await resp.json();
+    routeId = newRoute.id;
+    manualWaypoints = [];
+    toggleEditor(false);
+    await populateRouteDropdown(routeId);
+    routeInfo = await loadRouteInfo(routeId);
+    updateHeader();
+    renderRoute(routeInfo.waypoints, [], null);
+    await triggerCompute(routeId);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '\u26a1 Créer et lancer le calcul';
+  }
+}
+
+async function importGpx(file) {
+  const formData = new FormData();
+  formData.append('file', file);
+  try {
+    const resp = await fetch('/api/gpx/parse', { method: 'POST', body: formData });
+    if (!resp.ok) {
+      const err = await resp.json();
+      alert('Erreur GPX : ' + (err.error || 'Inconnue'));
+      return;
+    }
+    const data = await resp.json();
+    if (!data.waypoints || !data.waypoints.length) {
+      alert('Aucun waypoint trouvé dans le fichier GPX.');
+      return;
+    }
+    manualWaypoints = data.waypoints.map(wp => ({ lat: wp.lat, lon: wp.lon, name: wp.name }));
+    if (!editorOpen) {
+      document.getElementById('route-name').value = '';
+      toggleEditor(true);
+    } else {
+      renderWaypointList();
+      updatePreview();
+    }
+  } catch(e) {
+    alert('Erreur lors du chargement du fichier GPX.');
+    console.error(e);
+  }
+}
+
+// =============================================================================
+// Statut de calcul
+// =============================================================================
+function showStatusBar(state, text) {
+  const bar = document.getElementById('status-bar');
+  const icon = document.getElementById('status-icon');
+  const textEl = document.getElementById('status-text');
+  bar.className = '';
+  bar.classList.add('active');
+  if (state === 'computing') {
+    bar.classList.add('active');
+    icon.innerHTML = '<div class="spinner" style="width:16px;height:16px;border-width:2px"></div>';
+    textEl.textContent = text || 'Calcul en cours (environ 60 secondes)\u2026';
+  } else if (state === 'ready') {
+    bar.classList.add('ready');
+    icon.textContent = '✓';
+    textEl.textContent = text || 'Calcul terminé ! Données mises à jour.';
+  } else if (state === 'error') {
+    bar.classList.add('error');
+    icon.textContent = '✕';
+    textEl.textContent = text || 'Erreur lors du calcul. Voir les logs.';
+  }
+}
+
+function hideStatusBar() {
+  document.getElementById('status-bar').className = '';
+}
+
+async function triggerCompute(rId) {
+  const resp = await fetch(`/api/passage/${rId}/compute`, { method: 'POST' });
+  if (!resp.ok) return;
+  const data = await resp.json();
+  if (data.status === 'computing') {
+    showStatusBar('computing');
+    startStatusPolling(rId);
+  }
+}
+
+function startStatusPolling(rId) {
+  if (statusPollInterval) clearInterval(statusPollInterval);
+  statusPollStart = Date.now();
+  statusPollInterval = setInterval(async () => {
+    try {
+      const resp = await fetch(`/api/passage/${rId}/compute_status`);
+      if (!resp.ok) return;
+      const data = await resp.json();
+      const elapsed = Math.round((Date.now() - statusPollStart) / 1000);
+      document.getElementById('status-elapsed').textContent = `(${elapsed}s)`;
+
+      if (data.status === 'ready') {
+        clearInterval(statusPollInterval);
+        statusPollInterval = null;
+        showStatusBar('ready');
+        setTimeout(async () => {
+          hideStatusBar();
+          await refreshData();
+        }, 1500);
+      } else if (data.status === 'error') {
+        clearInterval(statusPollInterval);
+        statusPollInterval = null;
+        showStatusBar('error');
+      }
+    } catch(e) { /* silencieux */ }
+  }, 3000);
+}
+
+// =============================================================================
+// Dropdown routes
+// =============================================================================
+async function populateRouteDropdown(selectedId) {
+  const resp = await fetch('/api/routes');
+  if (!resp.ok) return;
+  const data = await resp.json();
+  allRoutes = data.routes;
+
+  const select = document.getElementById('route-select');
+  select.innerHTML = '';
+  data.routes.forEach(r => {
+    const opt = document.createElement('option');
+    opt.value = r.id;
+    opt.textContent = r.name + (r.status === 'computing' ? ' ⏳' : '');
+    if (r.id === (selectedId || routeId)) opt.selected = true;
+    select.appendChild(opt);
+  });
+}
+
+// =============================================================================
+// Rendu carte
+// =============================================================================
+function renderRoute(waypoints, simulations, selectedIdx) {
+  wpMarkers.forEach(m => map.removeLayer(m));
+  wpMarkers = [];
+  if (routeLine) map.removeLayer(routeLine);
+
+  const latlngs = waypoints.map(wp => [wp.lat, wp.lon]);
+  routeLine = L.polyline(latlngs, { color:'#4a9eff', weight:2, opacity:.5, dashArray:'6 4' }).addTo(map);
+
+  const wpColors = computeWaypointColors(waypoints);
+  const legend = document.getElementById('wp-legend');
+  legend.innerHTML = '';
+
+  waypoints.forEach((wp, i) => {
+    const color = wpColors[i] || '#4a9eff';
+    const isEndpoint = i === 0 || i === waypoints.length - 1;
+    const sz = isEndpoint ? 20 : 14;
+    const border = isEndpoint ? '2.5px' : '1.5px';
+    const wpIcon = L.divIcon({
+      className: '',
+      html: `<div style="width:${sz}px;height:${sz}px;border-radius:50%;background:${color};border:${border} solid #fff;cursor:grab;box-shadow:0 1px 5px rgba(0,0,0,.55);transition:transform .1s" onmouseenter="this.style.transform='scale(1.3)'" onmouseleave="this.style.transform=''"></div>`,
+      iconSize: [sz, sz],
+      iconAnchor: [sz/2, sz/2],
+    });
+    const marker = L.marker([wp.lat, wp.lon], {
+      icon: wpIcon,
+      draggable: true,
+      zIndexOffset: 1000,
+    }).addTo(map);
+
+    // Popup courants
+    const wpFcData = forecastData && forecastData.waypoints ? forecastData.waypoints.find(w => w.wp_index === i) : null;
+    let currPopupHtml = '';
+    if (wpFcData) {
+      const cFcs = wpFcData.forecasts.slice(0, 72);
+      const cS = cFcs.map(f => f.current_speed_knots).filter(v => v != null);
+      const cD = cFcs.map(f => f.current_direction_deg).filter(v => v != null);
+      if (cS.length) {
+        const cSpd = (cS.reduce((a,b)=>a+b,0)/cS.length).toFixed(1);
+        const cDir = Math.round(cD.reduce((a,b)=>a+b,0)/cD.length);
+        const avgBrg2 = bearing(waypoints[0].lat, waypoints[0].lon, waypoints[waypoints.length-1].lat, waypoints[waypoints.length-1].lon);
+        const along2 = parseFloat(cSpd) * Math.cos((cDir - avgBrg2) * Math.PI / 180);
+        const eff = along2 >= 0.3 ? 'favorable' : along2 <= -0.3 ? 'contraire' : 'neutre';
+        currPopupHtml = '<br>Courant : ' + cSpd + ' nds &rarr; ' + cDir + '&deg; (' + eff + ')';
+      }
+    }
+    marker.bindPopup(
+      '<div style="font-family:sans-serif;font-size:.82rem"><strong style="color:#7ecfff">WP' + i + '</strong> &mdash; ' +
+      (wp.name || '') + '<br><span style="color:#8b949e" id="wp-pos-' + i + '">' +
+      wp.lat.toFixed(3) + '&deg;N ' + wp.lon.toFixed(3) + '&deg;</span>' +
+      currPopupHtml + '<br><span style="color:#4a9eff;font-size:.72rem">Glisser pour déplacer</span></div>'
+    );
+
+    // Drag en temps réel : mettre à jour la polyligne
+    marker.on('drag', function() {
+      const pos = marker.getLatLng();
+      waypoints[i].lat = +pos.lat.toFixed(5);
+      waypoints[i].lon = +pos.lng.toFixed(5);
+      routeLine.setLatLngs(waypoints.map(w => [w.lat, w.lon]));
+    });
+
+    // Dragend : sauvegarder sur le serveur
+    marker.on('dragend', async function() {
+      const pos = marker.getLatLng();
+      const newLat = +pos.lat.toFixed(5);
+      const newLon = +pos.lng.toFixed(5);
+      waypoints[i].lat = newLat;
+      waypoints[i].lon = newLon;
+      // Mettre à jour le popup
+      const posEl = document.getElementById('wp-pos-' + i);
+      if (posEl) posEl.textContent = newLat.toFixed(3) + '°N ' + newLon.toFixed(3) + '°';
+      // Mettre à jour routeInfo pour cohérence
+      if (routeInfo && routeInfo.waypoints && routeInfo.waypoints[i]) {
+        routeInfo.waypoints[i].lat = newLat;
+        routeInfo.waypoints[i].lon = newLon;
+      }
+      try {
+        const resp = await fetch(`/api/passage/routes/${routeId}/move-waypoint`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ index: i, lat: newLat, lon: newLon }),
+        });
+        const data = await resp.json();
+        if (data.success && data.total_nm) {
+          document.getElementById('h-distance').textContent = data.total_nm + ' NM';
+        } else if (!data.success) {
+          console.warn('move-waypoint error:', data.error);
+        }
+      } catch(e) {
+        console.warn('move-waypoint fetch error:', e);
+      }
+    });
+
+    wpMarkers.push(marker);
+
+    const item = document.createElement('div');
+    item.className = 'wp-legend-item';
+    item.innerHTML = `<div class="wp-dot" style="background:${color}"></div>WP${i} ${wp.name || ''}`;
+    legend.appendChild(item);
+  });
+
+  if (latlngs.length > 0) map.fitBounds(L.latLngBounds(latlngs), { padding:[20, 20] });
+  renderCurrentArrows(waypoints, forecastData);
+  updateCurrentInfo(forecastData, routeInfo);
+}
+
+function renderCurrentArrows(waypoints, forecastData) {
+  if (currentArrowsGroup) { map.removeLayer(currentArrowsGroup); currentArrowsGroup = null; }
+  if (!forecastData || !forecastData.waypoints || !routeInfo) return;
+  currentArrowsGroup = L.layerGroup();
+  const avgBrg = bearing(
+    waypoints[0].lat, waypoints[0].lon,
+    waypoints[waypoints.length - 1].lat, waypoints[waypoints.length - 1].lon
+  );
+  forecastData.waypoints.forEach(wpData => {
+    const wp = waypoints[wpData.wp_index];
+    if (!wp) return;
+    const fcs = wpData.forecasts.slice(0, 72);
+    const cSpds = fcs.map(f => f.current_speed_knots).filter(v => v != null);
+    const cDirs = fcs.map(f => f.current_direction_deg).filter(v => v != null);
+    if (!cSpds.length) return;
+    const avgSpd = cSpds.reduce((a,b) => a+b, 0) / cSpds.length;
+    const avgDir = cDirs.reduce((a,b) => a+b, 0) / cDirs.length;
+    const along = avgSpd * Math.cos((avgDir - avgBrg) * Math.PI / 180);
+    const color = along >= 0.3 ? '#3fb950' : along <= -0.3 ? '#f85149' : '#4a9eff';
+    const opacity = Math.min(1, 0.3 + avgSpd * 0.4).toFixed(2);
+    const arrowHtml = '<svg width="28" height="28" style="transform:rotate(' + Math.round(avgDir) + 'deg);opacity:' + opacity + '"><path d="M14 2 L20 22 L14 17 L8 22 Z" fill="' + color + '" stroke="rgba(0,0,0,0.3)" stroke-width="1"/></svg>';
+    const arrow = L.marker([wp.lat, wp.lon], {
+      icon: L.divIcon({ className: '', html: arrowHtml, iconSize: [28, 28], iconAnchor: [14, 14] }),
+      interactive: false,
+    });
+    currentArrowsGroup.addLayer(arrow);
+  });
+  if (currentArrowsVisible) currentArrowsGroup.addTo(map);
+}
+
+function bearing(lat1, lon1, lat2, lon2) {
+  const dlon = (lon2 - lon1) * Math.PI / 180;
+  const la1r = lat1 * Math.PI / 180, la2r = lat2 * Math.PI / 180;
+  const x = Math.sin(dlon) * Math.cos(la2r);
+  const y = Math.cos(la1r) * Math.sin(la2r) - Math.sin(la1r) * Math.cos(la2r) * Math.cos(dlon);
+  return (Math.atan2(x, y) * 180 / Math.PI + 360) % 360;
+}
+
+function updateCurrentInfo(forecastData, routeInfo) {
+  const infoDiv = document.getElementById('current-info');
+  if (!forecastData || !forecastData.waypoints || !forecastData.waypoints.length || !routeInfo) {
+    infoDiv.style.display = 'none'; return;
+  }
+  const avgBrg = bearing(
+    routeInfo.waypoints[0].lat, routeInfo.waypoints[0].lon,
+    routeInfo.waypoints[routeInfo.waypoints.length-1].lat, routeInfo.waypoints[routeInfo.waypoints.length-1].lon
+  );
+  let allSpds = [], allDirs = [];
+  forecastData.waypoints.forEach(wpData => {
+    wpData.forecasts.slice(0, 72).forEach(f => {
+      if (f.current_speed_knots != null) allSpds.push(f.current_speed_knots);
+      if (f.current_direction_deg != null) allDirs.push(f.current_direction_deg);
+    });
+  });
+  if (!allSpds.length) { infoDiv.style.display = 'none'; return; }
+  const avgSpd = allSpds.reduce((a,b) => a+b, 0) / allSpds.length;
+  const avgDir = allDirs.reduce((a,b) => a+b, 0) / allDirs.length;
+  const along = avgSpd * Math.cos((avgDir - avgBrg) * Math.PI / 180);
+  let effectHtml;
+  if (along >= 0.3) effectHtml = '<span style="color:var(--green)">+' + along.toFixed(1) + ' nds favorable &uarr;</span>';
+  else if (along <= -0.3) effectHtml = '<span style="color:var(--red)">' + along.toFixed(1) + ' nds contraire &darr;</span>';
+  else effectHtml = '<span style="color:var(--text-dim)">' + along.toFixed(1) + ' nds neutre</span>';
+  document.getElementById('ci-speed').textContent = avgSpd.toFixed(1);
+  document.getElementById('ci-dir').textContent = Math.round(avgDir) + '\u00b0';
+  document.getElementById('ci-effect').innerHTML = effectHtml;
+  infoDiv.style.display = 'block';
+}
+
+function computeWaypointColors(waypoints) {
+  if (!forecastData || !forecastData.waypoints) return waypoints.map(() => '#4a9eff');
+  return waypoints.map((_, wpIdx) => {
+    const wpFc = forecastData.waypoints.find(w => w.wp_index === wpIdx);
+    if (!wpFc || !wpFc.forecasts.length) return '#4a9eff';
+    const winds = wpFc.forecasts.slice(0, 96).map(f => f.wind_speed_knots).filter(v => v != null);
+    if (!winds.length) return '#4a9eff';
+    const avg = winds.reduce((a, b) => a + b, 0) / winds.length;
+    const score = avg < 15 ? 80 : avg < 25 ? 65 : avg < 32 ? 40 : 20;
+    return scoreColor(score);
+  });
+}
+// =============================================================================
+// Cards departure planner
+// =============================================================================
+function renderDepartureTable(data) { renderSimulations(data); }
+
+function renderSimulations(data) {
+  const grid = document.getElementById('sims-cards');
+  const meta = document.getElementById('table-meta');
+
+  if (!data || !data.simulations || !data.simulations.length) {
+    grid.innerHTML = '<div class="empty-state">Aucune simulation disponible.<br>Le passage planner n\'a pas encore tourné pour cette route.</div>';
+    return;
+  }
+  if (data.computed_at) meta.textContent = `Calculé ${timeAgo(data.computed_at)}`;
+
+  const bestIdx = data.simulations.reduce((bi, s, i, arr) => s.overall_score > arr[bi].overall_score ? i : bi, 0);
+  grid.innerHTML = '';
+
+  data.simulations.forEach((sim, idx) => {
+    const isBest = idx === bestIdx;
+    const dep = new Date(sim.departure_date);
+    const dateStr = dep.toLocaleDateString('fr-FR', { weekday:'short', day:'2-digit', month:'short' });
+    const overall = sim.overall_score ?? 0;
+    const cls = scoreClass(overall);
+    const color = cls === 'green' ? 'var(--green)' : cls === 'orange' ? 'var(--orange)' : 'var(--red)';
+    const verdictText = { GO:'✓ GO', ATTENTION:'⚠ ATTN', 'NO-GO':'✕ NO-GO' }[sim.verdict] || '';
+    const alertsTxt = sim.alerts && sim.alerts.length
+      ? `⚠ ${sim.alerts.length} alerte${sim.alerts.length>1?'s':''}`
+      : '✓ OK';
+    const card = document.createElement('div');
+    card.className = 'dep-card' + (isBest ? ' best' : '');
+    card.innerHTML = `
+      <div class="card-date">${dateStr}</div>
+      <div class="card-score" style="color:${color}">${Math.round(overall)}</div>
+      <div class="card-verdict" style="color:${color}">${verdictText}</div>
+      <div class="card-bar"><div class="card-bar-fill" style="width:${Math.round(overall)}%;background:${color}"></div></div>
+      <div class="card-alerts" style="color:${sim.alerts&&sim.alerts.length?'var(--orange)':'var(--green)'}">
+        ${alertsTxt}
+      </div>`;
+    card.addEventListener('click', () => selectSimulation(idx, data.simulations));
+    grid.appendChild(card);
+  });
+  selectSimulation(bestIdx, data.simulations);
+}
+
+function scoreBar(val) {
+  const cls = scoreClass(val);
+  const color = cls === 'green' ? 'var(--green)' : cls === 'orange' ? 'var(--orange)' : 'var(--red)';
+  return `<div class="score-bar"><div class="score-track"><div class="score-fill ${cls}" style="width:${Math.round(val)}%"></div></div><span class="score-num" style="color:${color}">${Math.round(val)}</span></div>`;
+}
+
+function selectSimulation(idx, simulations) {
+  const sim = simulations[idx];
+  if (!sim) return;
+  selectedSimIdx = idx;
+  document.querySelectorAll('.dep-card').forEach((card, i) => card.classList.toggle('active', i === idx));
+
+  const dep = new Date(sim.departure_date);
+  const dateStr = dep.toLocaleDateString('fr-FR', { weekday:'long', day:'2-digit', month:'long', year:'numeric' });
+  document.getElementById('detail-title').textContent = `Départ le ${dateStr} — Score global ${Math.round(sim.overall_score)}/100`;
+  const detailAlerts = document.getElementById('detail-alerts');
+  detailAlerts.innerHTML = sim.alerts && sim.alerts.length
+    ? sim.alerts.map(a => `<div class="alert-item">⚠️ ${a}</div>`).join('')
+    : `<div style="color:var(--green);font-size:.85rem;padding:8px 0">✅ Aucune alerte critique pour ce départ</div>`;
+  document.getElementById('detail-content').classList.add('visible');
+
+  if (routeInfo && forecastData) renderRoute(routeInfo.waypoints, simulations, idx);
+}
+
+// =============================================================================
+// Chargement et rafraîchissement
+// =============================================================================
+async function loadRouteInfo(id) {
+  const resp = await fetch(`/api/passage/${id}/info`);
+  if (!resp.ok) throw new Error('Info route non disponible');
+  return resp.json();
+}
+
+async function refreshData() {
+  const ind = document.getElementById('refresh-indicator');
+  ind.classList.add('active');
+  try {
+    forecastData = await (await fetch(`/api/passage/${routeId}/forecast`)).json();
+    departureData = await (await fetch(`/api/passage/${routeId}/departures`)).json();
+    if (routeInfo) renderRoute(routeInfo.waypoints, departureData?.simulations || [], selectedSimIdx);
+    renderWindChartWithEnsemble(forecastData, routeId);
+    renderDepartureTable(departureData);
+    updateHeader();
+    if (forecastData?.collected_at)
+      document.getElementById('h-last-update').textContent = timeAgo(forecastData.collected_at);
+    loadBriefing(routeId);
+    loadWindArrows();
+  } finally {
+    ind.classList.remove('active');
+  }
+}
+
+async function switchRoute(id) {
+  routeId = id;
+  routeInfo = await loadRouteInfo(id);
+  updateHeader();
+  forecastData = await (await fetch(`/api/passage/${id}/forecast`)).json();
+  departureData = await (await fetch(`/api/passage/${id}/departures`)).json();
+  renderRoute(routeInfo.waypoints, departureData?.simulations || [], null);
+  renderWindChartWithEnsemble(forecastData, routeId);
+  renderDepartureTable(departureData);
+  updateHeader();
+  if (forecastData?.collected_at)
+    document.getElementById('h-last-update').textContent = timeAgo(forecastData.collected_at);
+  loadWindArrows();
+  loadBriefing(routeId);
+  const statusResp = await fetch(`/api/passage/${id}/compute_status`);
+  if (statusResp.ok) {
+    const s = await statusResp.json();
+    if (s.status === 'computing') { showStatusBar('computing'); startStatusPolling(id); }
+  }
+}
+
+function updateHeader() {
+  if (!routeInfo) return;
+  document.getElementById('h-distance').textContent = routeInfo.total_distance_nm + ' NM';
+  const isShort = routeInfo.total_distance_nm < 100;
+
+  // Base : ETA polaire si disponible, sinon ETA fixe
+  let durationText;
+  if (routeInfo.used_polars && routeInfo.estimated_days_polar) {
+    const polarDays = routeInfo.estimated_days_polar;
+    const polarSpd = routeInfo.avg_polar_speed_kts ? routeInfo.avg_polar_speed_kts.toFixed(1) : '?';
+    durationText = isShort
+      ? ('~' + (polarDays * 24).toFixed(0) + 'h')
+      : ('~' + polarDays + ' jours');
+    durationText += ' ⚡' + polarSpd + 'kts';  // indicateur polaire
+  } else {
+    const baseHours = routeInfo.estimated_days * 24;
+    durationText = isShort ? ('~' + baseHours.toFixed(0) + 'h') : ('~' + routeInfo.estimated_days + ' jours');
+  }
+
+  // Complément courants depuis les simulations de départ
+  if (departureData && departureData.simulations && departureData.simulations.length) {
+    const validSims = departureData.simulations.filter(s => s.adjusted_eta_hours != null);
+    if (validSims.length) {
+      const bestSim = validSims.reduce((b, s) => s.overall_score > b.overall_score ? s : b);
+      const eff = bestSim.current_effect_knots || 0;
+      const arrow = eff > 0.1 ? ' ↑' : eff < -0.1 ? ' ↓' : '';
+      if (!routeInfo.used_polars) {
+        // Sans polaires : afficher l'ETA courants uniquement
+        if (isShort) {
+          durationText += ' (~' + bestSim.adjusted_eta_hours.toFixed(1) + 'h avec courants' + arrow + ')';
+        } else {
+          const adjDays = (bestSim.adjusted_eta_hours / 24).toFixed(1);
+          durationText += ' (~' + adjDays + ' j avec courants' + arrow + ')';
+        }
+      } else if (arrow) {
+        // Avec polaires : juste l'indicateur courant
+        durationText += arrow;
+      }
+    }
+  }
+  document.getElementById('h-duration').textContent = durationText;
+  const lbl = document.getElementById('h-duration-label');
+  if (lbl) lbl.textContent = routeInfo.used_polars ? 'Durée (polaires)' : 'Durée estimée';
+}
+
+
+// =============================================================================
+// GRIB Wind Overlay (Feature 1)
+// =============================================================================
+let windVelocityLayer = null;
+let gribIndex = null;
+let windVisible = false;
+
+async function loadGribIndex() {
+  try {
+    const r = await fetch('/api/grib/index');
+    if (!r.ok) return null;
+    const data = await r.json();
+    return data && data.runs && data.runs.length ? data : null;
+  } catch(e) { return null; }
+}
+
+async function showWindLayer(run, fh) {
+  try {
+    const url = `/static/grib_cache/wind_${run}_${fh}.json`;
+    const r = await fetch(url);
+    if (!r.ok) return;
+    const data = await r.json();
+    if (windVelocityLayer) map.removeLayer(windVelocityLayer);
+    windVelocityLayer = L.velocityLayer({
+      displayValues: true,
+      displayOptions: {
+        velocityType: 'Wind', speedUnit: 'kt', displayPosition: 'bottomleft',
+      },
+      data,
+      maxVelocity: 30,
+      colorScale: ['#3288bd','#66c2a5','#abdda4','#e6f598','#fee08b','#fdae61','#f46d43','#d53e4f'],
+      velocityScale: 0.005, particleAge: 64, lineWidth: 1.2, opacity: 0.85,
+    }).addTo(map);
+  } catch(e) { console.error('showWindLayer error:', e); }
+}
+
+function wireWindButton() {
+  const btnWind = document.getElementById('btn-toggle-wind');
+  if (!btnWind) return;
+  btnWind.addEventListener('click', async () => {
+    if (windVisible) {
+      if (windVelocityLayer) map.removeLayer(windVelocityLayer);
+      document.getElementById('grib-time-select').style.display = 'none';
+      windVisible = false;
+      btnWind.style.opacity = '0.6';
+    } else {
+      if (!gribIndex) gribIndex = await loadGribIndex();
+      if (!gribIndex) { alert('Données GFS non disponibles. Relancer grib_collector.py.'); return; }
+      const run = gribIndex.runs[0];
+      const sel = document.getElementById('grib-time-select');
+      sel.innerHTML = run.valid_times.map((t, i) => {
+        const fhLabel = run.fh_labels ? run.fh_labels[i] : 'f' + String(i*6).padStart(3,'0');
+        return '<option value="' + fhLabel + '">' + t.slice(11,16) + ' UTC (+' + (i*6) + 'h)</option>';
+      }).join('');
+      sel.style.display = '';
+      sel.onchange = () => showWindLayer(run.run, sel.value);
+      await showWindLayer(run.run, run.fh_labels ? run.fh_labels[0] : 'f000');
+      windVisible = true;
+      btnWind.style.opacity = '1';
+    }
+  });
+}
+
+// =============================================================================
+// Spaghetti chart (Feature 2)
+// =============================================================================
+let showMembers = false;
+let ensembleData = null;
+
+async function loadEnsembleData(rId, wpIdx) {
+  try {
+    const r = await fetch(`/api/passage/${rId}/ensemble?wp=${wpIdx}`);
+    if (!r.ok) return null;
+    const data = await r.json();
+    return data.available ? data : null;
+  } catch(e) { return null; }
+}
+
+async function renderWindChartWithEnsemble(forecastData, rId) {
+  const ctx = document.getElementById('wind-chart').getContext('2d');
+  if (windChart) { windChart.destroy(); windChart = null; }
+  if (!forecastData || !forecastData.waypoints || !forecastData.waypoints.length) return;
+
+  const allTimes = new Set();
+  forecastData.waypoints.forEach(wp => wp.forecasts.forEach(f => allTimes.add(f.time)));
+  const sortedTimes = Array.from(allTimes).sort();
+  const step = 6;
+  const times = sortedTimes.filter((_, i) => i % step === 0).slice(0, 60);
+
+  const avgByTime = {};
+  times.forEach(t => {
+    const vals = [];
+    forecastData.waypoints.forEach(wp => {
+      const fc = wp.forecasts.find(f => f.time === t || f.time.startsWith(t.slice(0,13)));
+      if (fc && fc.wind_speed_knots != null) vals.push(fc.wind_speed_knots);
+    });
+    if (vals.length) avgByTime[t] = vals.reduce((a,b) => a+b, 0) / vals.length;
+  });
+
+  const t0 = new Date(times[0]);
+  const labels = times.map(t => `J+${Math.round((new Date(t) - t0) / 86400000)}`);
+  const avgData = times.map(t => avgByTime[t] ?? null);
+  const wpColors = ['#7ecfff','#3fb950','#d29922','#f85149','#a371f7','#56d364','#ffa657','#79c0ff'];
+
+  const datasets = [];
+
+  // Load ensemble data for WP0
+  ensembleData = rId ? await loadEnsembleData(rId, 0) : null;
+
+  if (ensembleData && ensembleData.stats && ensembleData.stats.length) {
+    const ensTimes = ensembleData.times;
+    const ensStats = ensembleData.stats;
+    const ensMembers = ensembleData.members || [];
+
+    const getEnsVal = (key, t) => {
+      const s = ensStats.find(es => es.time === t || es.time.startsWith(t.slice(0,13)));
+      return s ? s[key] : null;
+    };
+
+    const p10Data = times.map(t => getEnsVal('p10', t));
+    const p90Data = times.map(t => getEnsVal('p90', t));
+    const medData = times.map(t => getEnsVal('mean', t));
+
+    // P10-P90 band
+    datasets.push({
+      label: 'P90', data: p90Data,
+      borderColor: 'transparent', backgroundColor: 'rgba(74,158,255,0.12)',
+      borderWidth: 0, fill: '+1', tension: .4, pointRadius: 0,
+    });
+    datasets.push({
+      label: 'P10', data: p10Data,
+      borderColor: 'rgba(74,158,255,0.3)', backgroundColor: 'transparent',
+      borderWidth: 1, borderDash: [3,3], fill: false, tension: .4, pointRadius: 0,
+    });
+
+    // Membres individuels (hidden by default)
+    ensMembers.forEach((mSeries, mi) => {
+      const mData = times.map(t => {
+        const tIdx = ensTimes.indexOf(t) !== -1 ? ensTimes.indexOf(t) :
+                     ensTimes.findIndex(et => et.startsWith(t.slice(0,13)));
+        return tIdx >= 0 && tIdx < mSeries.length ? mSeries[tIdx] : null;
+      });
+      datasets.push({
+        label: `M${mi}`, data: mData,
+        borderColor: 'rgba(180,180,180,0.35)', borderWidth: 1,
+        fill: false, tension: .3, pointRadius: 0, hidden: !showMembers,
+        _isMember: true,
+      });
+    });
+
+    // Médiane ECMWF
+    datasets.push({
+      label: 'Médiane ECMWF', data: medData,
+      borderColor: '#4a9eff', backgroundColor: 'transparent',
+      borderWidth: 2.5, fill: false, tension: .4, pointRadius: 0,
+    });
+
+    // Reliability
+    const relDiv = document.getElementById('ensemble-reliability');
+    if (relDiv && ensembleData.reliability) {
+      const icon = ensembleData.reliability_level === 'good' ? '📊' :
+                   ensembleData.reliability_level === 'medium' ? '📊' : '⚠';
+      relDiv.textContent = `${icon} ${ensembleData.reliability}`;
+      relDiv.style.display = '';
+    }
+  }
+
+  // Vent moyen multi-modèles
+  datasets.push({
+    label: 'Vent moyen', data: avgData,
+    borderColor:'#4a9eff', backgroundColor:'rgba(74,158,255,.06)',
+    borderWidth:2, fill: ensembleData ? false : true, tension:.4, pointRadius:0,
+  });
+
+  forecastData.waypoints.forEach((wp, i) => {
+    datasets.push({
+      label: `WP${wp.wp_index}`,
+      data: times.map(t => {
+        const fc = wp.forecasts.find(f => f.time===t||f.time.startsWith(t.slice(0,13)));
+        return fc ? fc.wind_speed_knots : null;
+      }),
+      borderColor: wpColors[i % wpColors.length], borderWidth:1,
+      fill:false, tension:.4, pointRadius:0, borderDash:[3,3],
+    });
+  });
+
+  if (routeInfo) {
+    datasets.push({
+      label: `Limite (${routeInfo.max_wind_knots} kts)`,
+      data: times.map(() => routeInfo.max_wind_knots),
+      borderColor:'rgba(248,81,73,.7)', borderWidth:1.5, borderDash:[8,4],
+      fill:false, pointRadius:0,
+    });
+  }
+
+  // Seuils Force 6 / Force 7
+  datasets.push({
+    label: 'Force 6 (25 kt)', data: times.map(() => 25),
+    borderColor: 'rgba(251,191,36,0.45)', borderDash: [4,4], borderWidth: 1.5,
+    pointRadius: 0, fill: false, tension: 0,
+  });
+  datasets.push({
+    label: 'Force 7 (35 kt)', data: times.map(() => 35),
+    borderColor: 'rgba(248,113,113,0.45)', borderDash: [4,4], borderWidth: 1.5,
+    pointRadius: 0, fill: false, tension: 0,
+  });
+
+  windChart = new Chart(ctx, {
+    type:'line', data:{ labels, datasets },
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      plugins:{
+        legend:{ display:true, position:'top', labels:{ color:'#8b949e', font:{ size:10 }, boxWidth:18, padding:6,
+          filter: item => !item.text.startsWith('M') && item.text !== 'P90'
+        }},
+        tooltip:{ mode:'index', intersect:false, backgroundColor:'#21262d', titleColor:'#e6edf3', bodyColor:'#8b949e', borderColor:'#30363d', borderWidth:1,
+          callbacks:{ label: ctx => {
+            if (ctx.dataset._isMember || ctx.dataset.label === 'P90') return null;
+            return `${ctx.dataset.label}: ${ctx.parsed.y != null ? ctx.parsed.y.toFixed(1)+' kts' : '—'}`;
+          }},
+        },
+      },
+      scales:{
+        x:{ grid:{ color:'rgba(48,54,61,.4)'}, ticks:{ color:'#8b949e', font:{ size:10 }, maxTicksLimit:15 }},
+        y:{ grid:{ color:'rgba(48,54,61,.4)'}, ticks:{ color:'#8b949e', font:{ size:10 }, callback: v => v+' kts'}, min:0, suggestedMax:35 },
+      },
+      interaction:{ mode:'index', intersect:false },
+    },
+  });
+
+  document.getElementById('chart-meta').textContent =
+    `${forecastData.waypoints.length} waypoints${ensembleData ? ' • Ensemble ECMWF' : ''} • Collecté ${timeAgo(forecastData.collected_at)}`;
+
+  // Membres checkbox
+  const cb = document.getElementById('cb-show-members');
+  if (cb) {
+    cb.checked = showMembers;
+    cb.onchange = () => {
+      showMembers = cb.checked;
+      windChart.data.datasets.forEach(ds => {
+        if (ds._isMember) ds.hidden = !showMembers;
+      });
+      windChart.update();
+    };
+  }
+}
+
+// =============================================================================
+// Bootstrap
+// =============================================================================
+
+// =============================================================================
+// Flèches vent GRIB
+// =============================================================================
+
+function getWindColor(speedKts) {
+  if (speedKts < 10) return '#3b82f6';
+  if (speedKts < 15) return '#22c55e';
+  if (speedKts < 20) return '#eab308';
+  if (speedKts < 25) return '#f97316';
+  if (speedKts < 30) return '#ef4444';
+  return '#a855f7';
+}
+
+function createWindArrowIcon(speedKts, dirDeg) {
+  const color = getWindColor(speedKts);
+  const sz = Math.max(16, Math.min(34, 16 + speedKts * 0.55));
+  const sw = speedKts < 15 ? 1.5 : speedKts < 25 ? 2 : 2.5;
+  // dirDeg = direction vers laquelle le vent se déplace (convention GRIB + 180°)
+  const angle = (dirDeg + 180) % 360;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${sz}" height="${sz}" viewBox="0 0 24 24">
+    <g transform="rotate(${angle} 12 12)">
+      <line x1="12" y1="20" x2="12" y2="4" stroke="${color}" stroke-width="${sw}" stroke-linecap="round"/>
+      <polygon points="12,2 8,10 16,10" fill="${color}" opacity="0.9"/>
+    </g>
+  </svg>`;
+  return L.divIcon({
+    html: svg,
+    className: 'wind-arrow',
+    iconSize: [sz, sz],
+    iconAnchor: [sz/2, sz/2],
+  });
+}
+
+function renderWindArrows(gridPoints) {
+  if (!windArrowLayer) {
+    windArrowLayer = L.layerGroup();
+  }
+  windArrowLayer.clearLayers();
+  for (const pt of gridPoints) {
+    const icon = createWindArrowIcon(pt.speed_kts, pt.dir);
+    const marker = L.marker([pt.lat, pt.lon], { icon, interactive: false, keyboard: false, zIndexOffset: -1000 });
+    windArrowLayer.addLayer(marker);
+  }
+  if (windArrowsVisible && map) {
+    if (!map.hasLayer(windArrowLayer)) windArrowLayer.addTo(map);
+  }
+}
+
+function updateSliderLabel(fh, validTime) {
+  const label = document.getElementById('wind-time-label');
+  if (!label) return;
+  if (validTime) {
+    try {
+      const dt = new Date(validTime);
+      const opts = { weekday:'short', day:'numeric', month:'short', hour:'2-digit', minute:'2-digit', timeZone:'UTC' };
+      label.textContent = dt.toLocaleDateString('fr-FR', opts) + ' UTC';
+    } catch {
+      label.textContent = fh || '—';
+    }
+  } else {
+    label.textContent = fh || '—';
+  }
+}
+
+async function loadWindArrows(run, fh) {
+  try {
+    let url = '/api/passage/wind-grid';
+    const params = new URLSearchParams();
+    if (routeId) params.set('route_id', routeId);
+    if (run) params.set('run', run);
+    if (fh) params.set('fh', fh);
+    const resp = await fetch(url + '?' + params.toString());
+    if (!resp.ok) return;
+    const data = await resp.json();
+    if (data.error) return;
+
+    gribAvailableTimes = data.available_times || [];
+
+    // Mettre à jour le slider max
+    const slider = document.getElementById('wind-time-slider');
+    if (slider && gribAvailableTimes.length > 0) {
+      slider.max = gribAvailableTimes.length - 1;
+      // Trouver l'index du fh courant
+      if (fh && run) {
+        const idx = gribAvailableTimes.findIndex(t => t.run === run && t.fh === fh);
+        if (idx >= 0) slider.value = idx;
+      }
+    }
+
+    updateSliderLabel(data.fh, data.forecast_time);
+    renderWindArrows(data.grid || []);
+  } catch(e) {
+    console.warn('loadWindArrows error:', e);
+  }
+}
+
+function setupWindSlider() {
+  const slider = document.getElementById('wind-time-slider');
+  if (!slider) return;
+  slider.addEventListener('input', () => {
+    clearTimeout(windSliderDebounce);
+    windSliderDebounce = setTimeout(() => {
+      const idx = parseInt(slider.value);
+      if (idx >= 0 && idx < gribAvailableTimes.length) {
+        const t = gribAvailableTimes[idx];
+        loadWindArrows(t.run, t.fh);
+      }
+    }, 350);
+  });
+}
+
+// =============================================================================
+// Briefing météo
+// =============================================================================
+
+async function loadBriefing(rId) {
+  const panel = document.getElementById('briefing-panel');
+  if (panel) panel.style.display = '';
+  try {
+    const resp = await fetch(`/api/passage/${rId}/briefing`);
+    if (!resp.ok) return;
+    const data = await resp.json();
+    if (data.error) {
+      document.getElementById('briefing-summary').textContent = data.error;
+      return;
+    }
+    renderBriefing(data);
+  } catch(e) {
+    console.warn('loadBriefing error:', e);
+  }
+}
+
+function renderBriefing(d) {
+  // Résumé
+  const sumEl = document.getElementById('briefing-summary');
+  if (sumEl) sumEl.textContent = d.summary || '—';
+
+  // Meta
+  const metaEl = document.getElementById('briefing-meta');
+  if (metaEl && d.best_departure_date) {
+    try {
+      const dt = new Date(d.best_departure_date);
+      const dateStr = dt.toLocaleDateString('fr-FR', {day:'numeric', month:'long', year:'numeric'});
+      metaEl.textContent = `Meilleur départ : ${dateStr} (${d.best_score?.toFixed(0)}/100)`;
+    } catch { metaEl.textContent = ''; }
+  }
+
+  // Phases
+  const phasesEl = document.getElementById('briefing-phases');
+  if (phasesEl && d.phases) {
+    phasesEl.innerHTML = d.phases.map(p => `
+      <div class="phase-card">
+        <div class="phase-header">
+          <span class="phase-name">${p.name}</span>
+          <span class="phase-range">${p.range}</span>
+        </div>
+        <div class="phase-text">${p.text}</div>
+      </div>
+    `).join('');
+  }
+
+  // Alertes
+  const alertsEl = document.getElementById('briefing-alerts');
+  if (alertsEl) {
+    if (d.alerts && d.alerts.length > 0) {
+      alertsEl.innerHTML = `<div class="briefing-alerts-title">Alertes</div>` +
+        d.alerts.map(a => `<div class="alert-item">${a}</div>`).join('');
+    } else {
+      alertsEl.innerHTML = '';
+    }
+  }
+}
+
+async function bootstrap() {
+  initMap();
+
+  try {
+    const resp = await fetch('/api/routes');
+    if (!resp.ok) throw new Error('Pas de routes');
+    const data = await resp.json();
+    allRoutes = data.routes;
+
+    if (!data.routes.length) {
+      document.getElementById('h-distance').textContent = 'Créez une route pour commencer';
+      return;
+    }
+
+    routeId = data.routes[0].id;
+    await populateRouteDropdown(routeId);
+
+    routeInfo = await loadRouteInfo(routeId);
+    updateHeader();
+    renderRoute(routeInfo.waypoints, [], null);
+
+    [forecastData, departureData] = await Promise.all([
+      fetch(`/api/passage/${routeId}/forecast`).then(r => r.json()),
+      fetch(`/api/passage/${routeId}/departures`).then(r => r.json()),
+    ]);
+
+    renderWindChartWithEnsemble(forecastData, routeId);
+    renderDepartureTable(departureData);
+    updateHeader();
+    if (forecastData?.collected_at)
+      document.getElementById('h-last-update').textContent = timeAgo(forecastData.collected_at);
+
+    await loadWindArrows();
+    setupWindSlider();
+    loadBriefing(routeId);
+
+    const statusResp = await fetch(`/api/passage/${routeId}/compute_status`);
+    if (statusResp.ok) {
+      const s = await statusResp.json();
+      if (s.status === 'computing') { showStatusBar('computing'); startStatusPolling(routeId); }
+    }
+
+  } catch(e) {
+    console.error('Erreur bootstrap:', e);
+    document.getElementById('h-distance').textContent = 'Erreur de chargement';
+  }
+
+  // ── Événements ──────────────────────────────────────────────────────────────
+  wireWindButton();
+
+  document.getElementById('btn-toggle-currents').addEventListener('click', () => {
+    currentArrowsVisible = !currentArrowsVisible;
+    const btn = document.getElementById('btn-toggle-currents');
+    btn.style.opacity = currentArrowsVisible ? '1' : '0.5';
+    if (currentArrowsVisible) {
+      if (currentArrowsGroup) currentArrowsGroup.addTo(map);
+    } else {
+      if (currentArrowsGroup) map.removeLayer(currentArrowsGroup);
+    }
+  });
+
+  document.getElementById('btn-new-route').addEventListener('click', async () => {
+    manualWaypoints = [];
+    document.getElementById('route-name').value = '';
+    document.getElementById('route-preview-info').textContent = 'Récupération position InReach…';
+
+    // Récupérer la dernière position InReach/AIS
+    try {
+      const resp = await fetch('/api/position/latest');
+      if (resp.ok) {
+        const pos = await resp.json();
+        if (pos && pos.latitude != null && pos.longitude != null) {
+          const lat = +pos.latitude.toFixed(5);
+          const lon = +pos.longitude.toFixed(5);
+          const ts = pos.timestamp ? new Date(pos.timestamp).toLocaleString('fr-FR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }) : '';
+          const src = pos.source === 'inreach' ? 'InReach' : (pos.source || 'GPS');
+          manualWaypoints = [{ lat, lon, name: `Départ (${src}${ts ? ' ' + ts : ''})` }];
+        }
+      }
+    } catch(e) { /* position non disponible, continuer vide */ }
+
+    toggleEditor(true, true);  // forceEmpty : ne pas pré-remplir depuis l'ancienne route
+  });
+
+  document.getElementById('btn-import-gpx').addEventListener('click', () => {
+    document.getElementById('gpx-file-input').click();
+  });
+
+  document.getElementById('gpx-file-input').addEventListener('change', function() {
+    if (this.files && this.files[0]) {
+      importGpx(this.files[0]);
+      this.value = '';
+    }
+  });
+
+  document.getElementById('btn-edit-route').addEventListener('click', () => {
+    if (!editorOpen) manualWaypoints = [];
+    toggleEditor(!editorOpen);
+  });
+
+  document.getElementById('btn-mode-add-wp').addEventListener('click', () => setClickMode('waypoint'));
+  document.getElementById('btn-mode-stop').addEventListener('click', () => setClickMode(null));
+  document.getElementById('btn-remove-last-wp').addEventListener('click', removeLastWaypoint);
+  document.getElementById('btn-clear-all-wp').addEventListener('click', clearAllWaypoints);
+
+  document.getElementById('btn-cancel-edit').addEventListener('click', () => {
+    toggleEditor(false);
+  });
+
+  document.getElementById('btn-create-route').addEventListener('click', createRoute);
+
+  document.getElementById('btn-export-gpx').addEventListener('click', exportRouteGPX);
+
+  document.getElementById('route-select').addEventListener('change', async e => {
+    const newId = parseInt(e.target.value);
+    if (newId && newId !== routeId) await switchRoute(newId);
+  });
+
+  document.getElementById('btn-refresh').addEventListener('click', refreshData);
+
+  const btnRenameRoute = document.getElementById('btn-rename-route');
+  if (btnRenameRoute) {
+    btnRenameRoute.addEventListener('click', async () => {
+      if (!routeId) return;
+      const sel = document.getElementById('route-select');
+      const currentName = sel ? (sel.selectedOptions[0]?.text?.replace(' ⏳','') || '') : '';
+      const newName = prompt('Nouveau nom de la route :', currentName);
+      if (!newName || newName.trim() === currentName.trim()) return;
+      try {
+        const resp = await fetch(`/api/passage/routes/${routeId}/rename`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: newName.trim() }),
+        });
+        const data = await resp.json();
+        if (data.success) {
+          if (sel && sel.selectedOptions[0]) sel.selectedOptions[0].text = data.name;
+          routeInfo = routeInfo ? { ...routeInfo, name: data.name } : routeInfo;
+          document.title = 'SailTracker — ' + data.name;
+        } else {
+          alert('Erreur : ' + (data.error || 'Inconnue'));
+        }
+      } catch(e) {
+        alert('Erreur réseau : ' + e.message);
+      }
+    });
+  }
+
+  const btnDeleteRoute = document.getElementById('btn-delete-route');
+  if (btnDeleteRoute) {
+    btnDeleteRoute.addEventListener('click', async () => {
+      if (!routeId) return;
+      const sel = document.getElementById('route-select');
+      const routeName = sel ? (sel.selectedOptions[0]?.text || 'cette route') : 'cette route';
+      if (!confirm(`Supprimer la route "${routeName}" et toutes ses données ?\n\nCette action est irréversible.`)) return;
+      btnDeleteRoute.disabled = true;
+      btnDeleteRoute.textContent = 'Suppression…';
+      try {
+        const resp = await fetch(`/api/passage/routes/${routeId}/delete`, { method: 'POST' });
+        const data = await resp.json();
+        if (data.success) {
+          window.location.reload();
+        } else {
+          alert('Erreur : ' + (data.error || 'Inconnue'));
+          btnDeleteRoute.disabled = false;
+          btnDeleteRoute.innerHTML = '&#x1F5D1; Supprimer';
+        }
+      } catch(e) {
+        alert('Erreur réseau : ' + e.message);
+        btnDeleteRoute.disabled = false;
+        btnDeleteRoute.innerHTML = '&#x1F5D1; Supprimer';
+      }
+    });
+  }
+
+  const btnWindArrows = document.getElementById('btn-wind-arrows');
+  if (btnWindArrows) {
+    btnWindArrows.addEventListener('click', () => {
+      windArrowsVisible = !windArrowsVisible;
+      btnWindArrows.style.opacity = windArrowsVisible ? '1' : '0.5';
+      const legend = document.getElementById('wind-legend');
+      const slider = document.getElementById('wind-slider-panel');
+      if (windArrowsVisible) {
+        if (windArrowLayer && map) windArrowLayer.addTo(map);
+        if (legend) legend.style.display = '';
+        if (slider) slider.style.display = '';
+      } else {
+        if (windArrowLayer && map) map.removeLayer(windArrowLayer);
+        if (legend) legend.style.display = 'none';
+        if (slider) slider.style.display = 'none';
+      }
+    });
+  }
+
+  // Auto-refresh toutes les 30 min
+  setInterval(refreshData, 30 * 60 * 1000);
+
+  // Bouton Optimiser
+  const btnOptimize = document.getElementById('btn-optimize');
+  if (btnOptimize) btnOptimize.addEventListener('click', openOptimizeModal);
+}
+
+bootstrap();
+
+// =============================================================================
+// Routage isochrones
+// =============================================================================
+let isochroneLayers = [];
+let optimalRouteLine = null;
+let currentOptimizeTask = null;
+let optimizePolling = null;
+
+function openOptimizeModal() {
+  if (!currentRoute) { alert("Sélectionnez une route d'abord."); return; }
+  // Pré-remplir la date avec maintenant en UTC
+  const now = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  const val = `${now.getUTCFullYear()}-${pad(now.getUTCMonth()+1)}-${pad(now.getUTCDate())}T${pad(now.getUTCHours())}:${pad(now.getUTCMinutes())}`;
+  document.getElementById('opt-departure').value = val;
+  document.getElementById('opt-progress').style.display = 'none';
+  document.getElementById('opt-error').style.display = 'none';
+  document.getElementById('opt-btn-run').disabled = false;
+  document.getElementById('modal-optimize').style.display = 'flex';
+}
+
+function closeOptimizeModal() {
+  document.getElementById('modal-optimize').style.display = 'none';
+  if (optimizePolling) { clearInterval(optimizePolling); optimizePolling = null; }
+}
+
+async function runOptimize() {
+  const depVal = document.getElementById('opt-departure').value;
+  if (!depVal) { alert('Sélectionnez une date de départ.'); return; }
+  const departure = new Date(depVal + ':00Z').toISOString();
+
+  document.getElementById('opt-btn-run').disabled = true;
+  document.getElementById('opt-progress').style.display = 'block';
+  document.getElementById('opt-error').style.display = 'none';
+  document.getElementById('opt-progress-bar').style.width = '5%';
+  document.getElementById('opt-progress-text').textContent = 'Lancement du calcul…';
+
+  try {
+    const resp = await fetch(`/api/passage/routes/${currentRoute}/optimize`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({departure})
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Erreur serveur');
+    currentOptimizeTask = data.task_id;
+
+    let progress = 5;
+    const startTime = Date.now();
+    optimizePolling = setInterval(async () => {
+      try {
+        // Incrémenter la progress bar visuellement
+        const elapsed = (Date.now() - startTime) / 1000;
+        progress = Math.min(90, 5 + elapsed * 1.2);
+        document.getElementById('opt-progress-bar').style.width = progress + '%';
+        document.getElementById('opt-progress-text').textContent = `Calcul en cours… ${Math.round(elapsed)}s`;
+
+        const sr = await fetch(`/api/passage/routes/${currentRoute}/optimize/status?task_id=${currentOptimizeTask}`);
+        const sd = await sr.json();
+        if (sd.status === 'done') {
+          clearInterval(optimizePolling); optimizePolling = null;
+          await fetchAndDisplayResult(currentOptimizeTask);
+        } else if (sd.status === 'error') {
+          clearInterval(optimizePolling); optimizePolling = null;
+          showOptError(sd.error || 'Erreur de calcul');
+        }
+      } catch(e) {}
+    }, 2000);
+  } catch(e) {
+    showOptError(e.message);
+  }
+}
+
+function showOptError(msg) {
+  document.getElementById('opt-progress').style.display = 'none';
+  const errEl = document.getElementById('opt-error');
+  errEl.style.display = 'block';
+  errEl.textContent = '⚠ ' + msg;
+  document.getElementById('opt-btn-run').disabled = false;
+}
+
+async function fetchAndDisplayResult(taskId) {
+  try {
+    const resp = await fetch(`/api/passage/routes/${currentRoute}/optimize/result?task_id=${taskId}`);
+    const result = await resp.json();
+    closeOptimizeModal();
+    displayOptimizeResult(result);
+  } catch(e) {
+    showOptError('Impossible de récupérer le résultat: ' + e.message);
+  }
+}
+
+function displayOptimizeResult(result) {
+  clearOptimize();
+
+  const stats = result.stats || {};
+  document.getElementById('res-direct').textContent = (stats.direct_distance_nm || '—') + ' NM';
+  document.getElementById('res-duration').textContent = stats.duration_h ? stats.duration_h.toFixed(1) : '—';
+  if (stats.eta) {
+    const eta = new Date(stats.eta);
+    document.getElementById('res-eta').textContent = eta.toUTCString().slice(5, 22) + ' UTC';
+  }
+  document.getElementById('optimize-result-panel').style.display = 'block';
+
+  // Isochrones
+  const isoColors = d3Colors(result.isochrones ? result.isochrones.length : 0);
+  (result.isochrones || []).forEach((iso, i) => {
+    if (!iso.length) return;
+    const layer = L.polyline(iso, {
+      color: isoColors[i], weight: 1, opacity: 0.6, dashArray: '3,4'
+    }).addTo(map);
+    isochroneLayers.push(layer);
+  });
+
+  // Route optimale
+  const wps = result.waypoints || [];
+  if (wps.length > 1) {
+    const latlngs = wps.map(w => [w[0], w[1]]);
+    optimalRouteLine = L.polyline(latlngs, {
+      color: '#4ade80', weight: 3, opacity: 0.9
+    }).addTo(map);
+
+    // Tooltips sur les waypoints intermédiaires
+    wps.forEach((w, i) => {
+      if (i === 0 || i === wps.length - 1) return;
+      const eta = w[3] ? new Date(w[3]).toUTCString().slice(5, 22) : '?';
+      L.circleMarker([w[0], w[1]], {radius: 3, color: '#4ade80', fillColor: '#4ade80', fillOpacity: 0.8})
+       .bindTooltip(`ETA: ${eta}<br>Cap: ${w[4]}° | ${w[5]} kts<br>TWA: ${w[6]}° | TWS: ${w[7]} kts`, {sticky: true})
+       .addTo(map);
+    });
+
+    map.fitBounds(optimalRouteLine.getBounds(), {padding: [30, 30]});
+  }
+}
+
+// Palette gradient bleu→vert pour les isochrones
+function d3Colors(n) {
+  const colors = [];
+  for (let i = 0; i < n; i++) {
+    const t = n > 1 ? i / (n - 1) : 0;
+    const r = Math.round(96 + (74 - 96) * t);
+    const g = Math.round(165 + (222 - 165) * t);
+    const b = Math.round(250 + (128 - 250) * t);
+    colors.push(`rgb(${r},${g},${b})`);
+  }
+  return colors;
+}
+
+function toggleIsochrones(show) {
+  isochroneLayers.forEach(l => { if (show) l.addTo(map); else map.removeLayer(l); });
+}
+
+function clearOptimize() {
+  isochroneLayers.forEach(l => map.removeLayer(l));
+  isochroneLayers = [];
+  if (optimalRouteLine) { map.removeLayer(optimalRouteLine); optimalRouteLine = null; }
+  document.getElementById('optimize-result-panel').style.display = 'none';
+}
+</script>
+</body>
+</html>
