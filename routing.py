@@ -3,7 +3,9 @@
 routing.py — Algorithme de routage par isochrones pour SailTracker
 """
 
+import bisect
 import json
+import numpy as np
 import logging
 import math
 import os
@@ -109,6 +111,7 @@ class GribWindProvider:
                 logger.debug("GribWindProvider: erreur chargement %s: %s", f.name, e)
 
         self._timeline.sort(key=lambda x: x[0])
+        self._times = [t for t, _ in self._timeline]
         logger.info("GribWindProvider: %d fichiers GRIB chargés", len(self._timeline))
 
     def _parse_grid(self, data: list, key: str) -> dict:
@@ -174,21 +177,16 @@ class GribWindProvider:
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
 
-        # Trouver les 2 timesteps encadrant dt
-        before = [(t, k) for t, k in self._timeline if t <= dt]
-        after = [(t, k) for t, k in self._timeline if t > dt]
-
-        if not before and not after:
-            return 0.0, 0.0
-        if not before:
-            _, key = after[0]
+        # Trouver les 2 timesteps encadrant dt (O(log n) avec bisect)
+        i = bisect.bisect_right(self._times, dt)
+        if i == 0:
+            _, key = self._timeline[0]
             return self._uv_to_wind(self._get_uv(self._grids[key], lat, lon))
-        if not after:
-            _, key = before[-1]
+        if i >= len(self._timeline):
+            _, key = self._timeline[-1]
             return self._uv_to_wind(self._get_uv(self._grids[key], lat, lon))
-
-        t0, k0 = before[-1]
-        t1, k1 = after[0]
+        t0, k0 = self._timeline[i - 1]
+        t1, k1 = self._timeline[i]
         u0, v0 = self._get_uv(self._grids[k0], lat, lon)
         u1, v1 = self._get_uv(self._grids[k1], lat, lon)
 
@@ -275,30 +273,52 @@ def isochrone_routing(
 
         new_points = []
 
+        t_mid = t_current + timedelta(hours=time_step_h / 2)
+        angles_arr = np.array(angles, dtype=float)
+        angles_rad = np.radians(angles_arr)
+
         for pt in front:
             lat0, lon0 = pt["lat"], pt["lon"]
 
-            for hdg in angles:
-                # Vent au milieu du pas de temps
-                t_mid = t_current + timedelta(hours=time_step_h / 2)
-                twd, tws = wind_provider.get_wind(t_mid, lat0, lon0)
+            # Vent calculé une seule fois par point
+            twd, tws = wind_provider.get_wind(t_mid, lat0, lon0)
+            if tws < 2.0:
+                continue
 
-                if tws < 2.0:
-                    continue  # pas assez de vent
+            # Vectoriser sur tous les caps en une seule passe
+            twa_arr = np.abs((twd - angles_arr + 360) % 360)
+            twa_arr = np.where(twa_arr > 180, 360 - twa_arr, twa_arr)
+            speeds = polar.get_boat_speeds_batch(twa_arr, tws)
 
-                twa = twa_from_hdg_twd(hdg, twd)
-                boat_speed = polar.get_boat_speed(twa, tws)
+            valid_mask = speeds >= 0.5
+            if not np.any(valid_mask):
+                continue
 
-                if boat_speed < 0.5:
-                    continue
+            valid_hdgs = angles_arr[valid_mask]
+            valid_twa = twa_arr[valid_mask]
+            valid_speeds = speeds[valid_mask]
+            valid_dists = valid_speeds * time_step_h
 
-                dist = boat_speed * time_step_h  # NM parcourus en time_step_h
-                lat1, lon1 = move_point(lat0, lon0, hdg, dist)
+            # move_point vectorisé
+            d_rad = valid_dists / EARTH_RADIUS_NM
+            b_rad = np.radians(valid_hdgs)
+            phi1 = math.radians(lat0)
+            lam1 = math.radians(lon0)
+            phi2 = np.arcsin(math.sin(phi1) * np.cos(d_rad) +
+                             math.cos(phi1) * np.sin(d_rad) * np.cos(b_rad))
+            lam2 = lam1 + np.arctan2(np.sin(b_rad) * np.sin(d_rad) * math.cos(phi1),
+                                     np.cos(d_rad) - math.sin(phi1) * np.sin(phi2))
+            lats1 = np.degrees(phi2)
+            lons1 = np.degrees(lam2)
 
-                new_pt = make_point(lat1, lon1, pt, step, hdg, boat_speed, twa, tws)
+            for i in range(len(valid_hdgs)):
+                lat1, lon1 = float(lats1[i]), float(lons1[i])
+                hdg = float(valid_hdgs[i])
+                bs = float(valid_speeds[i])
+                twa = float(valid_twa[i])
+                new_pt = make_point(lat1, lon1, pt, step, hdg, bs, twa, tws)
                 new_points.append(new_pt)
 
-                # Test arrivée
                 d_end = haversine_nm(lat1, lon1, lat_e, lon_e)
                 if d_end < arrival_radius_nm:
                     if best_arrival is None or d_end < best_dist_remaining:

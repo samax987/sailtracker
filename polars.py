@@ -60,11 +60,17 @@ class PolarDiagram:
 
     def get_boat_speed(self, twa: float, tws: float) -> float:
         """Retourne la vitesse bateau en nœuds pour un TWA/TWS donné."""
-        # Clamp aux limites
         twa = max(0.0, min(180.0, abs(float(twa))))
         tws = max(0.0, float(tws))
         result = float(self._interp([[twa, tws]])[0])
         return max(0.0, result)
+
+    def get_boat_speeds_batch(self, twa_arr, tws: float):
+        """Batch lookup: array of TWA values at a fixed TWS. Returns np.ndarray."""
+        twa_c = np.clip(np.abs(twa_arr), 0.0, 180.0)
+        tws_val = max(0.0, float(tws))
+        pts = np.column_stack([twa_c, np.full(len(twa_c), tws_val, dtype=float)])
+        return np.maximum(0.0, self._interp(pts))
 
     def to_dict(self) -> dict:
         """Retourne les polaires au format JSON."""

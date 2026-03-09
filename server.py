@@ -1062,9 +1062,6 @@ def api_delete_route(route_id):
         row = conn.execute("SELECT id, name FROM passage_routes WHERE id=?", (route_id,)).fetchone()
         if not row:
             return jsonify({"success": False, "error": "Route non trouvée"}), 404
-        count = conn.execute("SELECT COUNT(*) as c FROM passage_routes").fetchone()["c"]
-        if count <= 1:
-            return jsonify({"success": False, "error": "Impossible de supprimer la dernière route"}), 400
         # Supprimer toutes les données associées
         conn.execute("DELETE FROM passage_forecasts WHERE route_id=?", (route_id,))
         conn.execute("DELETE FROM ensemble_forecasts WHERE route_id=?", (route_id,))

@@ -791,6 +791,7 @@ async function createRoute() {
     toggleEditor(false);
     await populateRouteDropdown(routeId);
     routeInfo = await loadRouteInfo(routeId);
+    setRouteButtonsEnabled(true);
     updateHeader();
     renderRoute(routeInfo.waypoints, [], null);
     await triggerCompute(routeId);
@@ -1515,6 +1516,67 @@ async function renderWindChartWithEnsemble(forecastData, rId) {
 }
 
 // =============================================================================
+// État vide (aucune route)
+// =============================================================================
+
+function setRouteButtonsEnabled(enabled) {
+  const ids = ['btn-edit-route', 'btn-rename-route', 'btn-delete-route',
+               'btn-refresh', 'btn-wind-arrows', 'btn-optimize', 'btn-export-gpx'];
+  ids.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) {
+      el.disabled = !enabled;
+      el.style.opacity = enabled ? '' : '0.35';
+      el.style.cursor = enabled ? '' : 'not-allowed';
+    }
+  });
+}
+
+function showEmptyState() {
+  // Vider le dropdown
+  const sel = document.getElementById('route-select');
+  sel.innerHTML = '<option value="">— Aucune route —</option>';
+
+  // Header
+  document.getElementById('h-distance').textContent = 'Aucune route';
+  document.getElementById('h-duration').textContent = '—';
+  document.getElementById('h-last-update').textContent = '—';
+
+  // Désactiver les boutons d'action sur une route
+  setRouteButtonsEnabled(false);
+
+  // Centrer la carte sur l'Atlantique
+  if (map) map.setView([20, -35], 4);
+
+  // Afficher message dans les sections de données
+  const simsGrid = document.getElementById('sims-cards');
+  if (simsGrid) simsGrid.innerHTML = `
+    <div style="grid-column:1/-1;display:flex;flex-direction:column;align-items:center;
+                justify-content:center;padding:48px 24px;text-align:center;gap:16px">
+      <div style="font-size:2.5rem">⛵</div>
+      <div style="font-size:1rem;font-weight:600;color:var(--text)">Aucune route configurée</div>
+      <div style="font-size:0.82rem;color:var(--text-dim);max-width:360px">
+        Cliquez sur <strong>+ Nouvelle</strong> pour créer votre première route,
+        ou importez un fichier <strong>GPX / KML / KMZ</strong>.
+      </div>
+    </div>`;
+
+  // Vider les autres sections
+  const detailContent = document.getElementById('detail-content');
+  if (detailContent) detailContent.innerHTML = '';
+  const briefingPanel = document.getElementById('briefing-panel');
+  if (briefingPanel) briefingPanel.style.display = 'none';
+
+  // Vider le graphique vent
+  if (windChart) { windChart.destroy(); windChart = null; }
+  const ctx = document.getElementById('wind-chart');
+  if (ctx) {
+    const c = ctx.getContext('2d');
+    c.clearRect(0, 0, ctx.width, ctx.height);
+  }
+}
+
+// =============================================================================
 // Bootstrap
 // =============================================================================
 
@@ -1701,11 +1763,10 @@ async function bootstrap() {
     allRoutes = data.routes;
 
     if (!data.routes.length) {
-      document.getElementById('h-distance').textContent = 'Créez une route pour commencer';
-      return;
-    }
-
-    routeId = data.routes[0].id;
+      // État vide — afficher un message propre sans casser les event listeners
+      showEmptyState();
+    } else {
+      routeId = data.routes[0].id;
     await populateRouteDropdown(routeId);
 
     routeInfo = await loadRouteInfo(routeId);
@@ -1732,6 +1793,8 @@ async function bootstrap() {
       const s = await statusResp.json();
       if (s.status === 'computing') { showStatusBar('computing'); startStatusPolling(routeId); }
     }
+
+    } // end else (routes non vides)
 
   } catch(e) {
     console.error('Erreur bootstrap:', e);
@@ -1802,7 +1865,7 @@ async function bootstrap() {
 
   document.getElementById('btn-create-route').addEventListener('click', createRoute);
 
-  document.getElementById('btn-export-gpx').addEventListener('click', exportRouteGPX);
+  document.getElementById('btn-export-gpx')?.addEventListener('click', exportRouteGPX);
 
   document.getElementById('route-select').addEventListener('change', async e => {
     const newId = parseInt(e.target.value);
@@ -1830,6 +1893,12 @@ async function bootstrap() {
           if (sel && sel.selectedOptions[0]) sel.selectedOptions[0].text = data.name;
           routeInfo = routeInfo ? { ...routeInfo, name: data.name } : routeInfo;
           document.title = 'SailTracker — ' + data.name;
+          // Feedback visuel
+          const btn = document.getElementById('btn-rename-route');
+          const origHTML = btn.innerHTML;
+          btn.innerHTML = '✓ Renommé';
+          btn.style.color = '#4ade80';
+          setTimeout(() => { btn.innerHTML = origHTML; btn.style.color = ''; }, 2000);
         } else {
           alert('Erreur : ' + (data.error || 'Inconnue'));
         }
@@ -1852,7 +1921,31 @@ async function bootstrap() {
         const resp = await fetch(`/api/passage/routes/${routeId}/delete`, { method: 'POST' });
         const data = await resp.json();
         if (data.success) {
-          window.location.reload();
+          // Re-charger la liste des routes
+          const routesResp = await fetch('/api/routes');
+          const routesData = routesResp.ok ? await routesResp.json() : { routes: [] };
+          allRoutes = routesData.routes;
+          if (allRoutes.length === 0) {
+            routeId = null;
+            routeInfo = null;
+            showEmptyState();
+          } else {
+            // Basculer sur la première route restante sans rechargement de page
+            const nextId = allRoutes[0].id;
+            await populateRouteDropdown(nextId);
+            routeId = nextId;
+            routeInfo = await loadRouteInfo(nextId);
+            updateHeader();
+            renderRoute(routeInfo.waypoints, [], null);
+            [forecastData, departureData] = await Promise.all([
+              fetch(`/api/passage/${nextId}/forecast`).then(r => r.json()),
+              fetch(`/api/passage/${nextId}/departures`).then(r => r.json()),
+            ]);
+            renderWindChartWithEnsemble(forecastData, nextId);
+            renderDepartureTable(departureData);
+          }
+          btnDeleteRoute.disabled = false;
+          btnDeleteRoute.innerHTML = '&#x1F5D1; Supprimer';
         } else {
           alert('Erreur : ' + (data.error || 'Inconnue'));
           btnDeleteRoute.disabled = false;
@@ -1904,7 +1997,7 @@ let currentOptimizeTask = null;
 let optimizePolling = null;
 
 function openOptimizeModal() {
-  if (!currentRoute) { alert("Sélectionnez une route d'abord."); return; }
+  if (!routeId) { alert("Sélectionnez une route d'abord."); return; }
   // Pré-remplir la date avec maintenant en UTC
   const now = new Date();
   const pad = n => String(n).padStart(2, '0');
@@ -1933,7 +2026,7 @@ async function runOptimize() {
   document.getElementById('opt-progress-text').textContent = 'Lancement du calcul…';
 
   try {
-    const resp = await fetch(`/api/passage/routes/${currentRoute}/optimize`, {
+    const resp = await fetch(`/api/passage/routes/${routeId}/optimize`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({departure})
@@ -1952,7 +2045,7 @@ async function runOptimize() {
         document.getElementById('opt-progress-bar').style.width = progress + '%';
         document.getElementById('opt-progress-text').textContent = `Calcul en cours… ${Math.round(elapsed)}s`;
 
-        const sr = await fetch(`/api/passage/routes/${currentRoute}/optimize/status?task_id=${currentOptimizeTask}`);
+        const sr = await fetch(`/api/passage/routes/${routeId}/optimize/status?task_id=${currentOptimizeTask}`);
         const sd = await sr.json();
         if (sd.status === 'done') {
           clearInterval(optimizePolling); optimizePolling = null;
@@ -1978,7 +2071,7 @@ function showOptError(msg) {
 
 async function fetchAndDisplayResult(taskId) {
   try {
-    const resp = await fetch(`/api/passage/routes/${currentRoute}/optimize/result?task_id=${taskId}`);
+    const resp = await fetch(`/api/passage/routes/${routeId}/optimize/result?task_id=${taskId}`);
     const result = await resp.json();
     closeOptimizeModal();
     displayOptimizeResult(result);
