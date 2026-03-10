@@ -513,3 +513,71 @@ Meilleure fenêtre départ (Cap-Vert→Barbade) :
 | VACUUM si DB > 100 MB | auto |
 
 Blueprint v1.2 — 2026-03-08
+
+---
+
+## 13. Audit complet — 2026-03-10
+
+> **Audit réalisé le** : 2026-03-10 ~10h30 UTC  
+> **3 rounds de corrections appliquées**
+
+### Corrections Round 1 (anti rate-limiting Open-Meteo)
+
+| Fix | Détail |
+|-----|--------|
+| Batch multi-coords | 54 requêtes/run → 6 (fetch_wind/marine/ensemble_batch) |
+| requests.Session() | Réutilisation connexions SSL dans passage_planner + weather_collector |
+| User-Agent |  sur tous les appels HTTP |
+| API_DELAY | 0.5s → 2.0s entre les 6 appels batch |
+
+### Corrections Round 2
+
+| Fix | Détail |
+|-----|--------|
+| AIS SSL context | ssl.create_default_context(certifi) + open_timeout=30s |
+| Forecast Verifier | Horizons réels — H+N compare ERA5(J-N) vs prévision(J-N) |
+| Departure simulations | Purge avant INSERT (3 doublons/date → 1) + nettoyage existants |
+| GRIB cache | cleanup_old_runs() sur early-return + 66 fichiers orphelins supprimés (66MB→17MB) |
+| Nginx | proxy_read_timeout 30s → 120s |
+
+### Corrections Round 3 (SQLite + bugs)
+
+| Fix | Détail |
+|-----|--------|
+| SQLite WAL mode | PRAGMA journal_mode=WAL activé (élimine database is locked) |
+| busy_timeout | sqlite3.connect(timeout=10) sur 13 connecteurs dans 8 fichiers |
+| get_polar() signature | get_polar(90,15) → get_polar().get_boat_speed(90,15) (bench python_ms était null) |
+| CORS | Origines restreintes à VPS + localhost (supprime wildcard *) |
+| watchdog double logging | logger.propagate=False |
+
+### État final du système (10 mars 10h30)
+
+| Composant | Statut |
+|-----------|--------|
+| Flask server | ✅ actif, 56 MB RAM |
+| AIS collector | ⚠️ actif mais IP bannie par aisstream.io (72h timeout) |
+| InReach | ✅ polling 10min — dernière position 07/03 01:16 (bateau à l'ancre) |
+| Weather collector | ✅ SSL retry résolu — Copernicus OK |
+| Passage planner | ✅ WAL mode — plus de database is locked |
+| GRIB cache | ✅ 2 runs, 17 MB |
+| Watchdog | ✅ tous checks OK, plus de double logging |
+| Daily briefing | ✅ 07h00 UTC — Telegram envoyé |
+| DB | ✅ 36 MB, WAL, intégrité OK |
+| Rust engine | ✅ compilé, polar/ensemble en prod (2-17ms) |
+| Mobile UI | ✅ User-Agent detection + /mobile |
+| GitHub | ✅ main à jour (6 commits depuis v1.2) |
+
+### Meilleure fenêtre départ (10 mars)
+
+- **Route** : Cap-Vert → Barbade (route #21, 2031 NM)
+- **Fenêtre** : 12 mars 2026 — score 78/100 (conf=80, confort=98)
+- **ETA polaires** : 18 jours @ 4.84 kts moy.
+- **Conditions** : alizés 13-18 kts, vagues 1.7-2.3m, courant +0.4 kts
+
+### Point bloquant restant (externe)
+
+**AIS aisstream.io** : IP VPS (45.55.239.73) bloquée après ~200 reconnexions répétées.  
+Action requise : contacter aisstream.io ou régénérer l'API key depuis le dashboard.  
+Impact : nul en pratique (bateau à l'ancre, hors zone AIS, tracking via InReach).
+
+*Blueprint v1.3 — 2026-03-10*
