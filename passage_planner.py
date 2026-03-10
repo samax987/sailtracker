@@ -20,6 +20,13 @@ import numpy as np
 import requests
 from dotenv import load_dotenv
 
+# Session HTTP partagée avec User-Agent — réduit les handshakes SSL et évite le rate-limiting
+_SESSION = requests.Session()
+_SESSION.headers.update({
+    "User-Agent": "SailTracker/1.0 (passage-planner; contact=samuelvisoko@gmail.com)",
+    "Accept-Encoding": "gzip, deflate",
+})
+
 sys.path.insert(0, str(Path(__file__).parent))
 try:
     from polars import get_polar, PolarDiagram
@@ -36,7 +43,7 @@ load_dotenv(BASE_DIR / ".env")
 
 DB_PATH = BASE_DIR / "sailtracker.db"
 REQUEST_TIMEOUT = 60
-API_DELAY = 0.5
+API_DELAY = 2.0
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
@@ -138,52 +145,82 @@ def bearing(lat1, lon1, lat2, lon2):
 # Collecte Open-Meteo
 # =============================================================================
 
-def fetch_wind_model(lat, lon, model):
+def _ensure_list(data):
+    """Open-Meteo retourne un dict si 1 coord, une liste si plusieurs."""
+    if isinstance(data, list):
+        return data
+    return [data]
+
+
+def fetch_wind_model_batch(waypoints, model):
+    """Fetch vent pour tous les waypoints en une seule requête."""
     url = "https://api.open-meteo.com/v1/forecast"
+    lats = ",".join(str(wp["lat"]) for wp in waypoints)
+    lons = ",".join(str(wp["lon"]) for wp in waypoints)
     params = {
-        "latitude": lat, "longitude": lon,
+        "latitude": lats, "longitude": lons,
         "hourly": "wind_speed_10m,wind_direction_10m,wind_gusts_10m",
         "wind_speed_unit": "kn", "models": model, "forecast_days": 16,
     }
     try:
-        resp = requests.get(url, params=params, timeout=REQUEST_TIMEOUT)
+        resp = _SESSION.get(url, params=params, timeout=REQUEST_TIMEOUT)
         resp.raise_for_status()
-        return resp.json()
+        return _ensure_list(resp.json())
     except Exception as e:
-        logger.warning("Erreur fetch wind %s @ (%.2f,%.2f) : %s", model, lat, lon, e)
-        return None
+        logger.warning("Erreur fetch wind batch %s : %s", model, e)
+        return [None] * len(waypoints)
 
 
-def fetch_marine(lat, lon):
+def fetch_marine_batch(waypoints):
+    """Fetch marine pour tous les waypoints en une seule requête."""
     url = "https://marine-api.open-meteo.com/v1/marine"
+    lats = ",".join(str(wp["lat"]) for wp in waypoints)
+    lons = ",".join(str(wp["lon"]) for wp in waypoints)
     params = {
-        "latitude": lat, "longitude": lon,
+        "latitude": lats, "longitude": lons,
         "hourly": "wave_height,wave_direction,wave_period,swell_wave_height,swell_wave_direction,swell_wave_period,ocean_current_velocity,ocean_current_direction",
         "forecast_days": 8,
     }
     try:
-        resp = requests.get(url, params=params, timeout=REQUEST_TIMEOUT)
+        resp = _SESSION.get(url, params=params, timeout=REQUEST_TIMEOUT)
         resp.raise_for_status()
-        return resp.json()
+        return _ensure_list(resp.json())
     except Exception as e:
-        logger.warning("Erreur fetch marine @ (%.2f,%.2f) : %s", lat, lon, e)
-        return None
+        logger.warning("Erreur fetch marine batch : %s", e)
+        return [None] * len(waypoints)
 
 
-def fetch_ensemble(lat, lon):
+def fetch_ensemble_batch(waypoints):
+    """Fetch ensemble pour tous les waypoints en une seule requête."""
     url = "https://ensemble-api.open-meteo.com/v1/ensemble"
+    lats = ",".join(str(wp["lat"]) for wp in waypoints)
+    lons = ",".join(str(wp["lon"]) for wp in waypoints)
     params = {
-        "latitude": lat, "longitude": lon,
+        "latitude": lats, "longitude": lons,
         "hourly": "wind_speed_10m,wind_direction_10m",
         "wind_speed_unit": "kn", "models": "ecmwf_ifs025", "forecast_days": 16,
     }
     try:
-        resp = requests.get(url, params=params, timeout=REQUEST_TIMEOUT)
+        resp = _SESSION.get(url, params=params, timeout=REQUEST_TIMEOUT)
         resp.raise_for_status()
-        return resp.json()
+        return _ensure_list(resp.json())
     except Exception as e:
-        logger.warning("Erreur fetch ensemble @ (%.2f,%.2f) : %s", lat, lon, e)
-        return None
+        logger.warning("Erreur fetch ensemble batch : %s", e)
+        return [None] * len(waypoints)
+
+
+# Compatibilité — fonctions unitaires conservées pour usage ponctuel
+def fetch_wind_model(lat, lon, model):
+    results = fetch_wind_model_batch([{"lat": lat, "lon": lon}], model)
+    return results[0] if results else None
+
+def fetch_marine(lat, lon):
+    results = fetch_marine_batch([{"lat": lat, "lon": lon}])
+    return results[0] if results else None
+
+def fetch_ensemble(lat, lon):
+    results = fetch_ensemble_batch([{"lat": lat, "lon": lon}])
+    return results[0] if results else None
 
 
 def parse_ensemble_stats(data):
@@ -374,25 +411,38 @@ def collect_forecasts_for_route(route, conn):
     route_id = route["id"]
     waypoints = route["waypoints"]
 
+    # ── Batch fetch : 4 modèles vent + marine + ensemble = 6 requêtes au lieu de 54 ──
+    logger.info("Batch fetch multi-coordonnées (%d waypoints)...", len(waypoints))
+    wind_batch = {}
+    for model in WIND_MODELS:
+        logger.info("  Vent modèle %s...", model)
+        wind_batch[model] = fetch_wind_model_batch(waypoints, model)
+        time.sleep(API_DELAY)
+
+    logger.info("  Marine (vagues + courants)...")
+    marine_batch = fetch_marine_batch(waypoints)
+    time.sleep(API_DELAY)
+
+    logger.info("  Ensemble ECMWF (51 membres)...")
+    ensemble_batch = fetch_ensemble_batch(waypoints)
+    time.sleep(API_DELAY)
+
     for wp_idx, wp in enumerate(waypoints):
         lat, lon = wp["lat"], wp["lon"]
         logger.info("WP%d/%d : %s (%.3f, %.3f)", wp_idx + 1, len(waypoints), wp.get("name", ""), lat, lon)
 
         wind_by_model = {}
         for model in WIND_MODELS:
-            data = fetch_wind_model(lat, lon, model)
+            data = wind_batch[model][wp_idx] if wp_idx < len(wind_batch[model]) else None
             if data and "hourly" in data:
                 wind_by_model[model] = data["hourly"]
-            time.sleep(API_DELAY)
 
-        marine_data = fetch_marine(lat, lon)
+        marine_data = marine_batch[wp_idx] if wp_idx < len(marine_batch) else None
         marine = marine_data.get("hourly", {}) if marine_data else {}
-        time.sleep(API_DELAY)
 
-        ensemble_data = fetch_ensemble(lat, lon)
+        ensemble_data = ensemble_batch[wp_idx] if wp_idx < len(ensemble_batch) else None
         ensemble_stats = parse_ensemble_stats(ensemble_data)
         store_ensemble_members(ensemble_data, route_id, wp_idx, collected_at, conn)
-        time.sleep(API_DELAY)
 
         times = []
         for model in WIND_MODELS:

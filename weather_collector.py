@@ -18,6 +18,13 @@ import time
 import requests
 from dotenv import load_dotenv
 
+# Session HTTP partagée — réutilise les connexions SSL, évite le rate-limiting
+_SESSION = requests.Session()
+_SESSION.headers.update({
+    "User-Agent": "SailTracker/1.0 (weather-collector; contact=samuelvisoko@gmail.com)",
+    "Accept-Encoding": "gzip, deflate",
+})
+
 # =============================================================================
 # Configuration
 # =============================================================================
@@ -39,7 +46,7 @@ def fetch_with_retry(url, params, max_attempts=3):
     delays = [30, 60, 120]
     for attempt in range(max_attempts):
         try:
-            resp = requests.get(url, params=params, timeout=HTTP_TIMEOUT)
+            resp = _SESSION.get(url, params=params, timeout=HTTP_TIMEOUT)
             resp.raise_for_status()
             return resp
         except requests.RequestException as e:
