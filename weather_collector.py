@@ -84,7 +84,7 @@ def setup_logging() -> logging.Logger:
     )
     handler.setFormatter(formatter)
     logger.addHandler(handler)
-    console.setFormatter(formatter)
+    logger.propagate = False
     return logger
 
 

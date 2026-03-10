@@ -88,8 +88,10 @@ def setup_logging() -> logging.Logger:
     handler.setFormatter(formatter)
     logger.addHandler(handler)
 
-    # Aussi sur stdout pour systemd journal
+    # Aussi sur stdout pour systemd journal (journalctl -u sailtracker-ais)
+    console = logging.StreamHandler()
     console.setFormatter(formatter)
+    logger.addHandler(console)
     return logger
 
 

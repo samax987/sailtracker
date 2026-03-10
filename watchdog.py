@@ -51,7 +51,6 @@ _rot = logging.handlers.RotatingFileHandler(
 )
 _fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
 _rot.setFormatter(_fmt)
-_con.setFormatter(_fmt)
 logger.addHandler(_rot)
 logger.propagate = False
 
@@ -136,9 +135,9 @@ def check_flask() -> tuple[bool, str]:
 
 def check_passage_planner(conn) -> tuple[bool, str]:
     """Vérifie que passage_planner a tourné dans les 12 dernières heures (route active = MAX id)."""
-    # On filtre sur la route active (dernier id = route en cours)
+    # On filtre sur la route principale (MIN id = route permanente Cap-Vert→Barbade)
     route_row = conn.execute(
-        "SELECT MAX(id) as rid FROM passage_routes WHERE status='ready'"
+        "SELECT MIN(id) as rid FROM passage_routes WHERE status='ready'"
     ).fetchone()
     active_route_id = route_row["rid"] if route_row and route_row["rid"] else None
     if active_route_id is None:

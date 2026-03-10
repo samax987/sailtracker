@@ -59,6 +59,7 @@ _handler = logging.handlers.RotatingFileHandler(
 )
 _handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
 logger.addHandler(_handler)
+logger.propagate = False
 # ── DB ────────────────────────────────────────────────────────────────────────
 
 def get_db() -> sqlite3.Connection:
