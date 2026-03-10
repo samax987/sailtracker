@@ -14,7 +14,9 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
+import ssl
 import aiohttp
+import certifi
 import websockets
 from dotenv import load_dotenv
 
@@ -269,8 +271,11 @@ async def run_ais_collector() -> None:
         )
 
         try:
+            ssl_ctx = ssl.create_default_context(cafile=certifi.where())
             async with websockets.connect(
                 AIS_WS_URL,
+                ssl=ssl_ctx,
+                open_timeout=30,
                 ping_interval=30,
                 ping_timeout=15,
                 close_timeout=10,

@@ -156,32 +156,30 @@ def main():
         logger.info("Zone : %s (%.1f, %.1f)", zone_name, lat, lon)
 
         # Observations ERA5 = vérité terrain (une seule fois par zone, indépendant du modèle)
-        obs_data = fetch_archive(lat, lon, verify_date_str)
-        time.sleep(API_DELAY)
-
-        if obs_data is None:
-            logger.warning("  Pas d'observations ERA5 pour %s — zone ignorée", zone_name)
-            continue
-
-        obs_speeds, obs_dirs = extract_day_data(obs_data, verify_date_str)
-        if not obs_speeds:
-            logger.warning("  Données ERA5 vides pour %s — zone ignorée", zone_name)
-            continue
-
-        logger.info("  ERA5 : %d heures d'observations", len(obs_speeds))
-
         for model in MODELS:
             logger.info("  Modèle : %s", model)
 
             for horizon_days in HORIZONS:
-                # Récupérer la prévision émise horizon_days jours avant
+                # Chaque horizon compare ERA5 vs prévision pour un jour différent
+                # H+24 → compare jour J-1, H+48 → J-2, etc.
+                target_date = today - timedelta(days=horizon_days)
+                target_date_str = target_date.strftime("%Y-%m-%d")
+
+                obs_data = fetch_archive(lat, lon, target_date_str)
+                time.sleep(API_DELAY)
+                if obs_data is None:
+                    continue
+                obs_speeds, obs_dirs = extract_day_data(obs_data, target_date_str)
+                if not obs_speeds:
+                    continue
+
                 fc_data = fetch_forecast(lat, lon, model, previous_day=horizon_days)
                 time.sleep(API_DELAY)
 
                 if fc_data is None:
                     continue
 
-                fc_speeds, fc_dirs = extract_day_data(fc_data, verify_date_str)
+                fc_speeds, fc_dirs = extract_day_data(fc_data, target_date_str)
                 if not fc_speeds:
                     continue
 
@@ -198,7 +196,7 @@ def main():
                         """INSERT OR REPLACE INTO model_accuracy
                            (date, model, zone, forecast_hour, wind_speed_error_avg, wind_dir_error_avg, sample_count)
                            VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                        (verify_date_str, model, zone_name, forecast_hour,
+                        (target_date_str, model, zone_name, forecast_hour,
                          round(wind_err, 3), round(dir_err, 3) if dir_err is not None else None, n)
                     )
                     total_inserts += 1

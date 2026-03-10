@@ -823,6 +823,9 @@ def main():
         forecasts_by_wp = load_forecasts_by_wp(conn, route["id"], collected_at)
 
         logger.info("Calcul du departure planner sur 15 jours (polaires=%s)...", polar is not None)
+        # Purge des simulations précédentes pour cette route (évite les doublons par run)
+        conn.execute("DELETE FROM departure_simulations WHERE route_id=?", (route["id"],))
+        conn.commit()
         now = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
         now_naive = now.replace(tzinfo=None)
         computed_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")

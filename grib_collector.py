@@ -259,6 +259,7 @@ def main():
             existing_runs = [r["run"] for r in existing_index.get("runs", [])]
             if run_id_clean in existing_runs:
                 logger.info("Run %s déjà en cache, skip.", run_id_clean)
+                cleanup_old_runs(MAX_RUNS)
                 return
         except Exception:
             pass
