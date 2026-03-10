@@ -49,12 +49,10 @@ logger.setLevel(logging.INFO)
 _rot = logging.handlers.RotatingFileHandler(
     log_dir / "watchdog.log", maxBytes=5*1024*1024, backupCount=3, encoding="utf-8"
 )
-_con = logging.StreamHandler()
 _fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
 _rot.setFormatter(_fmt)
 _con.setFormatter(_fmt)
 logger.addHandler(_rot)
-logger.addHandler(_con)
 logger.propagate = False
 
 
@@ -137,9 +135,17 @@ def check_flask() -> tuple[bool, str]:
 
 
 def check_passage_planner(conn) -> tuple[bool, str]:
-    """Vérifie que passage_planner a tourné dans les 12 dernières heures."""
+    """Vérifie que passage_planner a tourné dans les 12 dernières heures (route active = MAX id)."""
+    # On filtre sur la route active (dernier id = route en cours)
+    route_row = conn.execute(
+        "SELECT MAX(id) as rid FROM passage_routes WHERE status='ready'"
+    ).fetchone()
+    active_route_id = route_row["rid"] if route_row and route_row["rid"] else None
+    if active_route_id is None:
+        return False, "Aucune route active (status=ready) en base"
     row = conn.execute(
-        "SELECT MAX(computed_at) as last FROM departure_simulations"
+        "SELECT MAX(computed_at) as last FROM departure_simulations WHERE route_id=?",
+        (active_route_id,),
     ).fetchone()
     if not row or not row["last"]:
         return False, "Aucune simulation trouvée en base"

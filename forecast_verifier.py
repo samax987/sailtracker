@@ -17,6 +17,12 @@ from pathlib import Path
 import numpy as np
 import requests
 
+_SESSION = requests.Session()
+_SESSION.headers.update({
+    "User-Agent": "SailTracker/1.0 (forecast-verifier; contact=samuelvisoko@gmail.com)",
+    "Accept-Encoding": "gzip, deflate",
+})
+
 BASE_DIR = Path(__file__).parent
 DB_PATH = BASE_DIR / "sailtracker.db"
 LOG_DIR = BASE_DIR / "logs"
@@ -64,7 +70,7 @@ def fetch_archive(lat, lon, date_str):
         "end_date": date_str,
     }
     try:
-        resp = requests.get(url, params=params, timeout=REQUEST_TIMEOUT)
+        resp = _SESSION.get(url, params=params, timeout=REQUEST_TIMEOUT)
         resp.raise_for_status()
         return resp.json()
     except Exception as e:
@@ -85,7 +91,7 @@ def fetch_forecast(lat, lon, model, previous_day=0):
         "past_days": previous_day,
     }
     try:
-        resp = requests.get(url, params=params, timeout=REQUEST_TIMEOUT)
+        resp = _SESSION.get(url, params=params, timeout=REQUEST_TIMEOUT)
         resp.raise_for_status()
         return resp.json()
     except Exception as e:

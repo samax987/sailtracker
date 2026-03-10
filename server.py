@@ -1881,9 +1881,17 @@ def api_tracker_sync_inreach():
 
 @app.route("/api/tracker/reset", methods=["POST"])
 def api_tracker_reset():
+    import os, secrets as _secrets
     data = request.get_json(silent=True) or {}
+    # Double protection : confirm + token secret
     if data.get('confirm') != 'RESET':
         return jsonify({'success': False, 'error': 'Confirmation requise (confirm: RESET)'}), 400
+    admin_token = os.environ.get("SAILTRACKER_ADMIN_TOKEN", "")
+    provided_token = data.get("token", "")
+    if not admin_token:
+        return jsonify({'success': False, 'error': 'SAILTRACKER_ADMIN_TOKEN non configuré côté serveur'}), 500
+    if not _secrets.compare_digest(admin_token, provided_token):
+        return jsonify({'success': False, 'error': 'Token invalide'}), 403
     conn = _get_db_conn()
     count_row = conn.execute("SELECT COUNT(*) as n FROM positions").fetchone()
     deleted = count_row['n'] if count_row else 0

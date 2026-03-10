@@ -84,11 +84,7 @@ def setup_logging() -> logging.Logger:
     )
     handler.setFormatter(formatter)
     logger.addHandler(handler)
-
-    console = logging.StreamHandler()
     console.setFormatter(formatter)
-    logger.addHandler(console)
-
     return logger
 
 

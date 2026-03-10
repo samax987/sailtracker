@@ -89,10 +89,7 @@ def setup_logging() -> logging.Logger:
     logger.addHandler(handler)
 
     # Aussi sur stdout pour systemd journal
-    console = logging.StreamHandler()
     console.setFormatter(formatter)
-    logger.addHandler(console)
-
     return logger
 
 

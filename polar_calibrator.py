@@ -24,6 +24,12 @@ from pathlib import Path
 
 import requests
 
+_SESSION = requests.Session()
+_SESSION.headers.update({
+    "User-Agent": "SailTracker/1.0 (polar-calibrator; contact=samuelvisoko@gmail.com)",
+    "Accept-Encoding": "gzip, deflate",
+})
+
 BASE_DIR = Path(__file__).parent
 sys.path.insert(0, str(BASE_DIR))
 
@@ -53,9 +59,6 @@ _handler = logging.handlers.RotatingFileHandler(
 )
 _handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
 logger.addHandler(_handler)
-logger.addHandler(logging.StreamHandler(sys.stdout))
-
-
 # ── DB ────────────────────────────────────────────────────────────────────────
 
 def get_db() -> sqlite3.Connection:
@@ -124,7 +127,7 @@ def fetch_wind_openmeteo(lat: float, lon: float, dt: datetime):
         }
 
     try:
-        resp = requests.get(url, params=params, timeout=REQUEST_TIMEOUT)
+        resp = _SESSION.get(url, params=params, timeout=REQUEST_TIMEOUT)
         resp.raise_for_status()
         data = resp.json()
         hourly = data.get("hourly", {})
