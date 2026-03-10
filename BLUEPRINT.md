@@ -581,3 +581,59 @@ Action requise : contacter aisstream.io ou régénérer l'API key depuis le dash
 Impact : nul en pratique (bateau à l'ancre, hors zone AIS, tracking via InReach).
 
 *Blueprint v1.3 — 2026-03-10*
+
+---
+
+## 14. Audit Round 4 + 5 — 2026-03-10 (suite)
+
+> **Audit réalisé le** : 2026-03-10 ~12h00 UTC
+
+### Corrections Round 4 (sécurité + robustesse)
+
+| Fix | Détail |
+|-----|--------|
+| polar_calibrator.py | requests.Session() + User-Agent Open-Meteo |
+| forecast_verifier.py | requests.Session() + User-Agent Open-Meteo |
+| api_tracker_reset | Sécurisé : SAILTRACKER_ADMIN_TOKEN requis (secrets.compare_digest) |
+| watchdog passage check | Filtre sur route active MAX(id) WHERE status='ready' (évite faux-positifs) |
+
+### Corrections Round 5 (double-log + contention DB + InReach)
+
+| Fix | Détail |
+|-----|--------|
+| StreamHandler supprimé | watchdog/weather/polar_calibrator/ais_collector : plus de double-log dans fichiers cron |
+| passage_planner timeout | sqlite3.connect timeout 10s → 30s (contention à 06:00) |
+| Crontab décalé | weather +5min, forecast_verifier +10min, polar_calibrator +15min (anti-contention) |
+| inreach_collector | Paramètres d1/d2 Garmin MapShare pour récupérer l'historique complet (vs 1 position) |
+| inreach_collector | requests.Session() + User-Agent + fix datetime.utcnow() |
+
+### Token admin Reset endpoint
+Le token est dans  → 
+Appel :  avec 
+
+### Cron schedule final (anti-contention à :00)
+
+| Script | Cron | Offset |
+|--------|------|--------|
+| passage_planner | 0 */6 * * * | :00 |
+| weather_collector | 5 */3 * * * | :05 |
+| inreach_collector | */10 * * * * | :00 |
+| grib_collector | 30 5,11,17,23 * * * | :30 |
+| forecast_verifier | 10 6 * * * | :10 |
+| polar_calibrator | 15 * * * * | :15 |
+| watchdog | */30 * * * * | :00 |
+| daily_briefing | 0 7 * * * | :00 |
+
+### État système (10 mars 12h00)
+
+| Composant | Statut |
+|-----------|--------|
+| Flask + CORS | ✅ actif, origines restreintes |
+| AIS | ⚠️ IP ban aisstream.io (externe) |
+| InReach | ✅ historique récupéré via d1/d2, dernière pos 07/03 |
+| DB | ✅ WAL, 36 MB, plus de database is locked |
+| Crons | ✅ décalés anti-contention |
+| Logs | ✅ plus de double-log |
+| Sécurité | ✅ reset protégé par token |
+
+*Blueprint v1.4 — 2026-03-10*
