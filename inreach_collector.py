@@ -13,6 +13,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import requests
+
+_SESSION = requests.Session()
+_SESSION.headers.update({
+    "User-Agent": "SailTracker/1.0 (inreach-collector; contact=samuelvisoko@gmail.com)",
+    "Accept": "application/vnd.google-earth.kml+xml, text/xml, */*",
+})
 from dotenv import load_dotenv
 
 # =============================================================================
@@ -201,18 +207,45 @@ def main():
         logger.error("INREACH_KML_URL non configuré dans .env — arrêt.")
         return
 
-    logger.info("Collecte InReach depuis : %s", INREACH_KML_URL)
+    # Connexion DB (avant le fetch pour construire la date d1)
+    conn = sqlite3.connect(DB_PATH, timeout=10)
+    last_ts = get_last_inreach_timestamp(conn)
+    logger.info("Dernière position InReach en base : %s", last_ts or "aucune")
+
+    # Construire l'URL avec les paramètres de date pour récupérer l'historique
+    # Garmin MapShare accepte d1=YYYY-MM-DDTHH:MM:SSZ et d2=YYYY-MM-DDTHH:MM:SSZ
+    from urllib.parse import urlparse, urlencode, urlunparse, parse_qs
+    from datetime import timedelta
+
+    if last_ts:
+        # Demander depuis last_ts - 1h (marge pour les positions en double)
+        try:
+            d1_dt = datetime.fromisoformat(last_ts) - timedelta(hours=1)
+        except Exception:
+            d1_dt = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=7)
+    else:
+        # Première fois : récupérer 30 jours d'historique
+        d1_dt = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=30)
+
+    d1_str = d1_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+    d2_str = datetime.now(timezone.utc).replace(tzinfo=None).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    parsed = urlparse(INREACH_KML_URL)
+    params = parse_qs(parsed.query)
+    params["d1"] = [d1_str]
+    params["d2"] = [d2_str]
+    kml_url = urlunparse(parsed._replace(query=urlencode(params, doseq=True)))
+
+    logger.info("Collecte InReach depuis : %s (d1=%s)", INREACH_KML_URL, d1_str)
 
     # Télécharger le KML
     try:
-        resp = requests.get(INREACH_KML_URL, timeout=REQUEST_TIMEOUT, headers={
-            "User-Agent": "SailTracker/1.0",
-            "Accept": "application/vnd.google-earth.kml+xml, text/xml, */*",
-        })
+        resp = _SESSION.get(kml_url, timeout=REQUEST_TIMEOUT)
         resp.raise_for_status()
         kml_text = resp.text
     except requests.RequestException as e:
         logger.error("Erreur HTTP lors de la collecte KML : %s", e)
+        conn.close()
         return
 
     logger.info("KML téléchargé (%d octets)", len(kml_text))
@@ -223,15 +256,10 @@ def main():
 
     if not positions:
         logger.info("Aucune position à traiter.")
+        conn.close()
         return
 
-    # Connexion DB
-    conn = sqlite3.connect(DB_PATH, timeout=10)
-
     # Filtrer les doublons par rapport à la dernière position en base
-    last_ts = get_last_inreach_timestamp(conn)
-    logger.info("Dernière position InReach en base : %s", last_ts or "aucune")
-
     if last_ts:
         positions = [p for p in positions if p["timestamp"] > last_ts]
 
