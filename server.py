@@ -78,7 +78,7 @@ def score_label_filter(score):
     return 'MAUVAIS'
 
 from flask_cors import CORS
-CORS(app)
+CORS(app, origins=["http://45.55.239.73", "http://localhost", "http://127.0.0.1"])
 
 from briefing import generate_weather_briefing
 from polars import get_polar, reload_polar, update_polars_from_observations, PolarDiagram
@@ -111,7 +111,7 @@ def get_wind_provider() -> GribWindProvider:
 # =============================================================================
 
 def get_db():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -1636,7 +1636,7 @@ def api_engine_status():
     # Benchmark Python (polaire interne)
     try:
         t0 = _time.monotonic()
-        get_polar(90.0, 15.0)
+        get_polar().get_boat_speed(90.0, 15.0)
         bench_python_ms = round((_time.monotonic() - t0) * 1000, 1)
     except Exception:
         pass
@@ -1783,7 +1783,7 @@ def api_health():
 # =============================================================================
 
 def _get_db_conn():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -1897,7 +1897,7 @@ def api_tracker_reset():
 # =============================================================================
 
 def init_db():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     c = conn.cursor()
     c.executescript("""
         CREATE TABLE IF NOT EXISTS positions (

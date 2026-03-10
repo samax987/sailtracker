@@ -100,7 +100,7 @@ logger = setup_logging()
 
 def get_latest_position() -> tuple[float, float] | None:
     """Récupère la dernière position connue depuis SQLite."""
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     c = conn.cursor()
     c.execute(
         "SELECT latitude, longitude FROM positions ORDER BY timestamp DESC LIMIT 1"
@@ -121,7 +121,7 @@ def save_weather_snapshot(
 ) -> None:
     """Insère un snapshot météo complet dans weather_snapshots."""
     now = datetime.now(timezone.utc).isoformat()
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     c = conn.cursor()
     c.execute(
         """
@@ -158,7 +158,7 @@ def save_forecasts(collected_at: str, data_type: str, forecasts: list[dict]) -> 
     Insère les prévisions horaires dans weather_forecasts.
     data_type : 'wind' ou 'wave'
     """
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     c = conn.cursor()
 
     # Supprimer les anciennes prévisions du même type collectées avant maintenant

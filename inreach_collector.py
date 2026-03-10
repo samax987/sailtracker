@@ -226,7 +226,7 @@ def main():
         return
 
     # Connexion DB
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=10)
 
     # Filtrer les doublons par rapport à la dernière position en base
     last_ts = get_last_inreach_timestamp(conn)

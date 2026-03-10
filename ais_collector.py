@@ -104,7 +104,7 @@ logger = setup_logging()
 
 def init_db() -> None:
     """Crée les tables si elles n'existent pas encore."""
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     c = conn.cursor()
     c.executescript("""
         CREATE TABLE IF NOT EXISTS positions (
@@ -135,7 +135,7 @@ def save_position(
     nav_status: str | None,
 ) -> None:
     """Insère une position et purge les données de plus de 30 jours."""
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     c = conn.cursor()
 
     c.execute(

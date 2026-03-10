@@ -243,7 +243,7 @@ def build_pre_departure_message(departure, wx):
 def main():
     logger.info("=== Résumé Telegram quotidien ===")
 
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     conn.row_factory = sqlite3.Row
 
     at_sea = get_at_sea_status(conn)
