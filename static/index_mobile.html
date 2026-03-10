@@ -1,0 +1,1041 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>SailTracker</title>
+
+  <link rel="stylesheet" href="/lib/leaflet.css" />
+
+  <style>
+    /* =====================================================================
+       Reset & variables
+    ===================================================================== */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg-panel:   rgba(10, 20, 45, 0.95);
+      --bg-panel2:  rgba(10, 20, 45, 0.85);
+      --bg-sheet:   #0a1628;
+      --border:     rgba(100, 160, 255, 0.25);
+      --accent:     #4a9eff;
+      --accent2:    #7ecfff;
+      --text:       #e8f4ff;
+      --text-dim:   #8ab4d4;
+      --green:      #3ddc84;
+      --orange:     #ffb347;
+      --red:        #ff5555;
+      --radius:     10px;
+      --font:       -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      --tab-height: 56px;
+      --sheet-radius: 16px;
+    }
+
+    html, body {
+      height: 100%;
+      font-family: var(--font);
+      background: #060e1e;
+      color: var(--text);
+      overflow: hidden;
+      -webkit-tap-highlight-color: transparent;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    /* =====================================================================
+       Map — full screen
+    ===================================================================== */
+    #map {
+      position: fixed;
+      inset: 0;
+      bottom: calc(var(--tab-height) + env(safe-area-inset-bottom));
+      z-index: 0;
+    }
+
+    /* =====================================================================
+       At-sea banner
+    ===================================================================== */
+    #at-sea-banner {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      z-index: 800;
+      background: linear-gradient(90deg, rgba(0,180,100,0.95) 0%, rgba(0,140,80,0.95) 100%);
+      color: #fff;
+      font-size: 0.78rem;
+      font-weight: 600;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 8px 12px;
+      padding-top: calc(8px + env(safe-area-inset-top));
+      backdrop-filter: blur(6px);
+      border-bottom: 1px solid rgba(255,255,255,0.2);
+      letter-spacing: 0.03em;
+      flex-wrap: wrap;
+      text-align: center;
+    }
+    #at-sea-banner a { color: #fff; text-decoration: underline; opacity: 0.85; }
+    #at-sea-banner.active { display: flex; }
+
+    /* =====================================================================
+       Loading overlay
+    ===================================================================== */
+    #loading {
+      position: fixed;
+      inset: 0;
+      z-index: 9999;
+      background: #060e1e;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      transition: opacity 0.5s;
+    }
+    #loading.hidden { opacity: 0; pointer-events: none; }
+    .spinner {
+      width: 40px;
+      height: 40px;
+      border: 3px solid rgba(74, 158, 255, 0.2);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .loading-text { color: var(--text-dim); font-size: 0.85rem; letter-spacing: 0.05em; }
+
+    /* =====================================================================
+       FAB — center button (floating above tab bar)
+    ===================================================================== */
+    #fab-center {
+      position: fixed;
+      bottom: calc(var(--tab-height) + env(safe-area-inset-bottom) + 16px);
+      right: 16px;
+      z-index: 700;
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      color: var(--accent2);
+      font-size: 1.3rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      transition: background 0.2s;
+      -webkit-tap-highlight-color: transparent;
+    }
+    #fab-center:active { background: rgba(74, 158, 255, 0.25); }
+
+    /* =====================================================================
+       Bottom sheet
+    ===================================================================== */
+    #bottom-sheet {
+      position: fixed;
+      left: 0; right: 0;
+      bottom: calc(var(--tab-height) + env(safe-area-inset-bottom));
+      z-index: 600;
+      background: var(--bg-sheet);
+      border-radius: var(--sheet-radius) var(--sheet-radius) 0 0;
+      border-top: 1px solid var(--border);
+      transform: translateY(100%);
+      transition: transform 0.3s ease;
+      max-height: 65vh;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+    #bottom-sheet.open { transform: translateY(0); }
+
+    .sheet-handle {
+      display: flex;
+      justify-content: center;
+      padding: 10px 0 4px;
+      cursor: pointer;
+    }
+    .sheet-handle-bar {
+      width: 40px;
+      height: 4px;
+      background: rgba(255,255,255,0.25);
+      border-radius: 2px;
+    }
+
+    .sheet-content {
+      padding: 4px 20px 20px;
+      display: none;
+    }
+    .sheet-content.active { display: block; }
+
+    .sheet-title {
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: 14px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    /* =====================================================================
+       Stat rows in sheets
+    ===================================================================== */
+    .stat-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+      gap: 12px;
+    }
+    .stat-row:last-child { border-bottom: none; }
+
+    .stat-label {
+      font-size: 0.88rem;
+      color: var(--text-dim);
+      white-space: nowrap;
+    }
+    .stat-value {
+      font-size: 1rem;
+      font-weight: 600;
+      color: var(--text);
+      text-align: right;
+    }
+    .stat-value.big {
+      font-size: 1.6rem;
+      font-weight: 700;
+      color: var(--accent2);
+    }
+
+    /* Connection dot */
+    #conn-dot {
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 6px var(--green);
+      transition: background 0.5s, box-shadow 0.5s;
+      flex-shrink: 0;
+    }
+    #conn-dot.warn  { background: var(--orange); box-shadow: 0 0 6px var(--orange); }
+    #conn-dot.error { background: var(--red);    box-shadow: 0 0 6px var(--red); }
+
+    /* =====================================================================
+       Weather sections in sheet
+    ===================================================================== */
+    .weather-section {
+      margin-bottom: 12px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+    }
+    .weather-section:last-child { border-bottom: none; margin-bottom: 0; }
+
+    .weather-section-title {
+      font-size: 0.72rem;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      margin-bottom: 8px;
+      font-weight: 700;
+    }
+
+    .weather-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.95rem;
+      padding: 5px 0;
+    }
+    .weather-row .label { color: var(--text-dim); }
+    .weather-row .val   { font-weight: 600; }
+
+    .wind-arrow {
+      display: inline-block;
+      transition: transform 0.8s ease;
+      margin-left: 4px;
+    }
+
+    .collected-note {
+      font-size: 0.72rem;
+      color: var(--text-dim);
+      margin-top: 8px;
+      text-align: right;
+    }
+
+    /* =====================================================================
+       Bottom tab bar
+    ===================================================================== */
+    #tab-bar {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      z-index: 700;
+      display: flex;
+      background: var(--bg-panel);
+      border-top: 1px solid var(--border);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      height: calc(var(--tab-height) + env(safe-area-inset-bottom));
+      padding-bottom: env(safe-area-inset-bottom);
+    }
+
+    .tab-btn {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 3px;
+      background: none;
+      border: none;
+      color: var(--text-dim);
+      font-family: var(--font);
+      font-size: 0.65rem;
+      font-weight: 600;
+      cursor: pointer;
+      padding: 8px 4px;
+      min-height: 48px;
+      transition: color 0.15s;
+      -webkit-tap-highlight-color: transparent;
+      letter-spacing: 0.03em;
+    }
+    .tab-btn .tab-icon {
+      font-size: 1.3rem;
+      line-height: 1;
+    }
+    .tab-btn.active {
+      color: var(--accent2);
+    }
+    .tab-btn:active {
+      opacity: 0.7;
+    }
+
+    /* =====================================================================
+       Leaflet popup custom
+    ===================================================================== */
+    .leaflet-popup-content-wrapper {
+      background: var(--bg-panel2) !important;
+      border: 1px solid var(--border) !important;
+      color: var(--text) !important;
+      border-radius: var(--radius) !important;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.6) !important;
+      backdrop-filter: blur(10px) !important;
+    }
+    .leaflet-popup-tip { background: var(--bg-panel2) !important; }
+    .leaflet-popup-content {
+      margin: 10px 14px !important;
+      font-family: var(--font) !important;
+      font-size: 0.88rem !important;
+      line-height: 1.6 !important;
+    }
+    .popup-name { font-size: 1rem; font-weight: 700; color: var(--accent2); margin-bottom: 4px; }
+
+    /* Boat icon */
+    /* Icône voilier emoji */
+    .boat-icon-root {
+      width: 40px; height: 40px;
+      position: relative;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .boat-emoji-wrap {
+      display: flex; align-items: center; justify-content: center;
+      width: 40px; height: 40px;
+    }
+    .boat-emoji {
+      font-size: 24px;
+      line-height: 1;
+      display: inline-block;
+      transform-origin: center;
+      filter: drop-shadow(0 0 5px rgba(59, 130, 246, 0.9));
+      animation: boatSway 3s ease-in-out infinite;
+    }
+    @keyframes boatSway {
+      0%   { transform: rotate(-3deg); }
+      50%  { transform: rotate(3deg);  }
+      100% { transform: rotate(-3deg); }
+    }
+    .anchor-pulse-ring {
+      position: absolute;
+      width: 30px; height: 30px;
+      border-radius: 50%;
+      border: 1.5px solid #4a9eff;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%) scale(0.6);
+      opacity: 0;
+      pointer-events: none;
+    }
+    .anchor-pulse-ring.active {
+      animation: anchorPulse 2s ease-out infinite;
+    }
+    @keyframes anchorPulse {
+      0%   { transform: translate(-50%, -50%) scale(0.6); opacity: 0.8; }
+      100% { transform: translate(-50%, -50%) scale(2.2); opacity: 0;   }
+    }
+    .boat-marker-icon {
+      transition: transform 1s ease-out !important;
+    }
+
+    /* Leaflet zoom control — push above tab bar */
+    .leaflet-bottom.leaflet-right {
+      bottom: calc(var(--tab-height) + env(safe-area-inset-bottom) + 70px) !important;
+    }
+
+    /* =====================================================================
+       Tracker modal
+    ===================================================================== */
+    #tracker-modal {
+      display: none;
+      position: fixed;
+      inset: 0;
+      z-index: 2000;
+      background: rgba(0,0,0,.7);
+      backdrop-filter: blur(3px);
+      align-items: flex-end;
+      justify-content: center;
+      padding-bottom: env(safe-area-inset-bottom);
+    }
+    #tracker-modal-inner {
+      background: #161b22;
+      border: 1px solid #2d4a7a;
+      border-radius: 16px 16px 0 0;
+      padding: 24px;
+      width: 100%;
+      color: #e2e8f0;
+      font-family: sans-serif;
+      max-height: 80vh;
+      overflow-y: auto;
+    }
+    .modal-show { display: flex !important; }
+  </style>
+</head>
+<body>
+
+<!-- At-sea banner -->
+<div id="at-sea-banner">
+  <span>⛵ TRAVERSÉE EN COURS</span>
+  <span id="at-sea-progress">—%</span>
+  <span>·</span>
+  <span id="at-sea-eta">ETA : —</span>
+  <span>·</span>
+  <span id="at-sea-dist">— NM restants</span>
+  <span>·</span>
+  <a id="at-sea-link" href="/passage">Voir route →</a>
+</div>
+
+<!-- Loading overlay -->
+<div id="loading">
+  <svg width="56" height="56" viewBox="0 0 56 56" fill="none">
+    <path d="M28 48 L10 28 L28 8 Z" fill="#4a9eff" opacity="0.9"/>
+    <path d="M28 48 L46 32 L28 16 Z" fill="#7ecfff" opacity="0.7"/>
+    <line x1="28" y1="8" x2="28" y2="50" stroke="#4a9eff" stroke-width="2"/>
+    <path d="M12 46 Q28 52 44 46" stroke="#4a9eff" stroke-width="2" fill="none"/>
+  </svg>
+  <div class="loading-text">Chargement de SailTracker…</div>
+  <div class="spinner"></div>
+</div>
+
+<!-- Map -->
+<div id="map"></div>
+
+<!-- FAB — center on boat -->
+<button id="fab-center" title="Centrer sur le bateau">⌖</button>
+
+<!-- Bottom sheet -->
+<div id="bottom-sheet">
+  <div class="sheet-handle" id="sheet-handle">
+    <div class="sheet-handle-bar"></div>
+  </div>
+
+  <!-- Position sheet -->
+  <div class="sheet-content" id="sheet-position">
+    <div class="sheet-title">
+      <span id="conn-dot"></span>
+      <span>Position</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">Vitesse</span>
+      <span class="stat-value big" id="boat-speed">—</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">Cap</span>
+      <span class="stat-value" id="boat-course">—</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">Statut</span>
+      <span class="stat-value" id="boat-status">—</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">Mise à jour</span>
+      <span class="stat-value" style="color:var(--text-dim)" id="boat-update">—</span>
+    </div>
+  </div>
+
+  <!-- Weather sheet -->
+  <div class="sheet-content" id="sheet-weather">
+    <div class="sheet-title">Météo &amp; Océan</div>
+
+    <div class="weather-section">
+      <div class="weather-section-title">🌬 Vent</div>
+      <div class="weather-row">
+        <span class="label">Vitesse</span>
+        <span class="val" id="w-wind-speed">—</span>
+      </div>
+      <div class="weather-row">
+        <span class="label">Direction</span>
+        <span class="val">
+          <span id="w-wind-dir">—</span>
+          <span class="wind-arrow" id="w-wind-arrow">↑</span>
+        </span>
+      </div>
+      <div class="weather-row">
+        <span class="label">Rafales</span>
+        <span class="val" id="w-wind-gusts">—</span>
+      </div>
+    </div>
+
+    <div class="weather-section">
+      <div class="weather-section-title">🌊 Vagues</div>
+      <div class="weather-row">
+        <span class="label">Hauteur</span>
+        <span class="val" id="w-wave-height">—</span>
+      </div>
+      <div class="weather-row">
+        <span class="label">Période</span>
+        <span class="val" id="w-wave-period">—</span>
+      </div>
+    </div>
+
+    <div class="weather-section">
+      <div class="weather-section-title">🌀 Houle</div>
+      <div class="weather-row">
+        <span class="label">Hauteur</span>
+        <span class="val" id="w-swell-height">—</span>
+      </div>
+      <div class="weather-row">
+        <span class="label">Direction</span>
+        <span class="val" id="w-swell-dir">—</span>
+      </div>
+      <div class="weather-row">
+        <span class="label">Période</span>
+        <span class="val" id="w-swell-period">—</span>
+      </div>
+    </div>
+
+    <div class="weather-section">
+      <div class="weather-section-title">↔ Courant</div>
+      <div class="weather-row">
+        <span class="label">Vitesse</span>
+        <span class="val" id="w-current-speed">—</span>
+      </div>
+      <div class="weather-row">
+        <span class="label">Direction</span>
+        <span class="val" id="w-current-dir">—</span>
+      </div>
+    </div>
+
+    <div class="collected-note">Collecté : <span id="w-collected">—</span></div>
+  </div>
+
+  <!-- Stats sheet -->
+  <div class="sheet-content" id="sheet-stats">
+    <div class="sheet-title">📊 Voyage</div>
+    <div class="stat-row">
+      <span class="stat-label">Distance totale</span>
+      <span class="stat-value" id="s-distance">—</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">Vitesse moy.</span>
+      <span class="stat-value" id="s-avg-speed">—</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">Vitesse max.</span>
+      <span class="stat-value" id="s-max-speed">—</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">Suivi depuis</span>
+      <span class="stat-value" style="font-size:0.82rem;color:var(--text-dim)" id="s-since">—</span>
+    </div>
+    <div class="stat-row" style="border-bottom:none;margin-top:8px">
+      <button id="btn-tracker-ctrl" style="
+        flex:1; padding:12px; background:rgba(74,158,255,0.12);
+        border:1px solid rgba(74,158,255,0.35); border-radius:8px;
+        color:var(--accent2); font-size:0.9rem; font-weight:600;
+        font-family:var(--font); cursor:pointer;">⚙ Contrôle Tracker</button>
+    </div>
+  </div>
+</div>
+
+<!-- Tab bar -->
+<div id="tab-bar">
+  <button class="tab-btn active" data-tab="map" id="tab-map">
+    <span class="tab-icon">🧭</span>
+    <span>Carte</span>
+  </button>
+  <button class="tab-btn" data-tab="position" id="tab-position">
+    <span class="tab-icon">⛵</span>
+    <span>Position</span>
+  </button>
+  <button class="tab-btn" data-tab="weather" id="tab-weather">
+    <span class="tab-icon">☁️</span>
+    <span>Météo</span>
+  </button>
+  <button class="tab-btn" data-tab="stats" id="tab-stats">
+    <span class="tab-icon">📊</span>
+    <span>Stats</span>
+  </button>
+</div>
+
+<!-- Tracker control modal -->
+<div id="tracker-modal">
+  <div id="tracker-modal-inner">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px">
+      <span style="font-weight:700; font-size:1rem">⚙ Contrôle du Tracker</span>
+      <button id="btn-close-tracker" style="background:none;border:none;color:#94a3b8;cursor:pointer;font-size:1.4rem;padding:4px 8px">✕</button>
+    </div>
+    <div id="tracker-status-box" style="background:#0a1628; border-radius:8px; padding:12px; margin-bottom:16px; font-size:.88rem; line-height:1.8">
+      <div>AIS service : <span id="ts-ais-status">—</span></div>
+      <div>Dernière pos. AIS : <span id="ts-ais-age">—</span></div>
+      <div>Dernière pos. InReach : <span id="ts-inreach-age">—</span></div>
+      <div>Total positions : <span id="ts-count">—</span></div>
+    </div>
+    <div style="display:flex; gap:8px; margin-bottom:12px; flex-wrap:wrap">
+      <button id="btn-ais-start"   style="flex:1; padding:12px 8px; background:rgba(74,158,255,0.12); border:1px solid rgba(74,158,255,0.35); border-radius:8px; color:#7ecfff; font-size:0.9rem; cursor:pointer; font-family:sans-serif">▶ Démarrer AIS</button>
+      <button id="btn-ais-stop"    style="flex:1; padding:12px 8px; background:rgba(74,158,255,0.12); border:1px solid rgba(74,158,255,0.35); border-radius:8px; color:#7ecfff; font-size:0.9rem; cursor:pointer; font-family:sans-serif">⏸ Arrêter AIS</button>
+      <button id="btn-ais-restart" style="flex:1; padding:12px 8px; background:rgba(74,158,255,0.12); border:1px solid rgba(74,158,255,0.35); border-radius:8px; color:#7ecfff; font-size:0.9rem; cursor:pointer; font-family:sans-serif">🔄 Redémarrer</button>
+    </div>
+    <button id="btn-inreach-sync" style="width:100%; padding:12px; margin-bottom:12px; background:rgba(74,158,255,0.12); border:1px solid rgba(74,158,255,0.35); border-radius:8px; color:#7ecfff; font-size:0.9rem; cursor:pointer; font-family:sans-serif">
+      📡 Sync InReach maintenant
+    </button>
+    <button id="btn-tracker-reset" style="width:100%; padding:12px; background:rgba(255,85,85,0.12); border:1px solid rgba(255,85,85,0.35); border-radius:8px; color:#ff5555; font-size:0.9rem; cursor:pointer; font-family:sans-serif">
+      🗑 Réinitialiser les positions
+    </button>
+    <div id="tracker-msg" style="margin-top:12px; font-size:.85rem; color:#60a5fa; min-height:20px; text-align:center"></div>
+  </div>
+</div>
+
+<script src="/lib/leaflet.js"></script>
+<script>
+// =============================================================================
+// Configuration
+// =============================================================================
+const API_BASE = '';
+const REFRESH_POSITION_MS = 60 * 1000;
+const REFRESH_WEATHER_MS  = 10 * 60 * 1000;
+const REFRESH_STATS_MS    = 5  * 60 * 1000;
+const FRESH_THRESHOLD_MIN = 30;
+const STALE_THRESHOLD_MIN = 180;
+
+// =============================================================================
+// État global
+// =============================================================================
+let map, boatMarker, trackPolyline;
+let lastPosition = null;
+let trackHours = 72;
+let activeTab = 'map'; // 'map' | 'position' | 'weather' | 'stats'
+
+// =============================================================================
+// Utilitaires
+// =============================================================================
+function setText(id, val) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = val;
+}
+
+function fmt(val, decimals) {
+  if (val == null || isNaN(val)) return '—';
+  return Number(val).toFixed(decimals);
+}
+
+function timeAgo(isoStr) {
+  const d = new Date(isoStr);
+  const diff = Date.now() - d.getTime();
+  const m = Math.floor(diff / 60000);
+  if (m < 1) return "à l'instant";
+  if (m < 60) return `il y a ${m} min`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `il y a ${h}h${String(m % 60).padStart(2, '0')}`;
+  return `il y a ${Math.floor(h / 24)}j`;
+}
+
+function degToCompass(deg) {
+  const dirs = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSO','SO','OSO','O','ONO','NO','NNO'];
+  return dirs[Math.round((deg % 360) / 22.5) % 16];
+}
+
+// =============================================================================
+// Carte
+// =============================================================================
+function initMap() {
+  map = L.map('map', {
+    center: [27.7, -17.98],
+    zoom: 8,
+    zoomControl: false,
+    attributionControl: true,
+  });
+
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© <a href="https://openstreetmap.org">OpenStreetMap</a>',
+    maxZoom: 19,
+  }).addTo(map);
+
+  L.control.zoom({ position: 'bottomright' }).addTo(map);
+
+  trackPolyline = L.polyline([], {
+    color: '#ff4444',
+    weight: 3,
+    opacity: 0.75,
+    lineJoin: 'round',
+  }).addTo(map);
+}
+
+// =============================================================================
+// Icône voilier emoji (style v2) + animations v1
+// =============================================================================
+function createBoatIcon(course, speed) {
+  const r = course || 0;
+  const moving = speed != null && speed > 0.5;
+  const pulseClass = 'anchor-pulse-ring' + (moving ? '' : ' active');
+  const html = `<div class="boat-icon-root">
+    <div class="${pulseClass}"></div>
+    <div class="boat-emoji-wrap" style="transform:rotate(${r}deg)">
+      <span class="boat-emoji">&#x26F5;</span>
+    </div>
+  </div>`;
+  return L.divIcon({
+    html,
+    iconSize: [40, 40],
+    iconAnchor: [20, 20],
+    popupAnchor: [0, -22],
+    className: 'boat-marker-icon',
+  });
+}
+
+// Met à jour le cap et les animations sans recréer l'élément DOM
+function updateBoatVisuals(course, speed) {
+  if (!boatMarker) return;
+  const el = boatMarker.getElement();
+  if (!el) return;
+  const wrap = el.querySelector('.boat-emoji-wrap');
+  if (wrap) wrap.style.transform = `rotate(${course || 0}deg)`;
+  const pulse = el.querySelector('.anchor-pulse-ring');
+  if (pulse) pulse.classList.toggle('active', !(speed != null && speed > 0.5));
+}
+
+// =============================================================================
+// Indicateur de connexion
+// =============================================================================
+function updateConnectionDot(timestampStr) {
+  const dot = document.getElementById('conn-dot');
+  if (!timestampStr) { dot.className = 'error'; return; }
+  const ts = new Date(timestampStr);
+  const ageMin = (Date.now() - ts.getTime()) / 60000;
+  if (ageMin < FRESH_THRESHOLD_MIN) {
+    dot.className = '';
+  } else if (ageMin < STALE_THRESHOLD_MIN) {
+    dot.className = 'warn';
+  } else {
+    dot.className = 'error';
+  }
+}
+
+// =============================================================================
+// Position
+// =============================================================================
+function updateBoatPanel(pos) {
+  setText('boat-speed', pos.speed_knots != null ? `${fmt(pos.speed_knots, 1)} kn` : '—');
+  setText('boat-course', pos.course != null ? `${fmt(pos.course, 0)}° ${degToCompass(pos.course)}` : '—');
+  setText('boat-status', pos.nav_status || '—');
+  setText('boat-update', pos.timestamp ? timeAgo(pos.timestamp) : '—');
+}
+
+async function fetchPosition() {
+  try {
+    const resp = await fetch(`${API_BASE}/api/position/latest`);
+    if (!resp.ok) { updateConnectionDot(null); return; }
+    const pos = await resp.json();
+
+    lastPosition = pos;
+    updateBoatPanel(pos);
+    updateConnectionDot(pos.timestamp);
+
+    const latlng = [pos.latitude, pos.longitude];
+    if (!boatMarker) {
+      boatMarker = L.marker(latlng, { icon: createBoatIcon(pos.course, pos.speed_knots), zIndexOffset: 1000 }).addTo(map);
+      map.setView(latlng, 8);
+    } else {
+      boatMarker.setLatLng(latlng);
+      updateBoatVisuals(pos.course, pos.speed_knots);
+    }
+
+    const ago = pos.timestamp ? timeAgo(pos.timestamp) : '?';
+    boatMarker.bindPopup(`
+      <div class="popup-name">⛵ Mon Voilier</div>
+      <div>🕐 ${ago}</div>
+      <div>🚀 <strong>${fmt(pos.speed_knots, 1)} nœuds</strong></div>
+      <div>🧭 Cap : <strong>${fmt(pos.course, 0)}°</strong></div>
+      <div>⚡ ${pos.nav_status || '—'}</div>
+      <div style="font-size:0.7rem;color:#8ab4d4;margin-top:4px">
+        ${pos.latitude.toFixed(4)}°N ${pos.longitude.toFixed(4)}°E
+      </div>`);
+  } catch (err) {
+    console.warn('[SailTracker mobile] Erreur position:', err);
+    updateConnectionDot(null);
+  }
+}
+
+// =============================================================================
+// Trace
+// =============================================================================
+async function fetchTrack() {
+  try {
+    const resp = await fetch(`${API_BASE}/api/position/track?hours=${trackHours}`);
+    if (!resp.ok) return;
+    const data = await resp.json();
+    trackPolyline.setLatLngs(data.track.map(p => [p.latitude, p.longitude]));
+  } catch (err) {
+    console.warn('[SailTracker mobile] Erreur trace:', err);
+  }
+}
+
+// =============================================================================
+// Météo
+// =============================================================================
+async function fetchWeather() {
+  try {
+    const resp = await fetch(`${API_BASE}/api/weather/latest`);
+    if (!resp.ok) return;
+    const d = await resp.json();
+
+    const ws = d.wind?.speed_kmh;
+    const wd = d.wind?.direction_deg;
+    const ws_kts = ws != null ? ws * 0.5399 : null;
+    setText('w-wind-speed', ws_kts != null ? `${fmt(ws_kts, 1)} kts` : '—');
+    setText('w-wind-dir', wd != null ? `${fmt(wd, 0)}° ${degToCompass(wd)}` : '—');
+    setText('w-wind-gusts', d.wind?.gusts_kmh != null ? `${fmt(d.wind.gusts_kmh * 0.5399, 1)} kts` : '—');
+    if (wd != null) {
+      document.getElementById('w-wind-arrow').style.transform = `rotate(${wd}deg)`;
+    }
+
+    setText('w-wave-height', d.waves?.height_m != null ? `${fmt(d.waves.height_m, 1)} m` : '—');
+    setText('w-wave-period', d.waves?.period_s != null ? `${fmt(d.waves.period_s, 1)} s` : '—');
+
+    setText('w-swell-height', d.swell?.height_m != null ? `${fmt(d.swell.height_m, 1)} m` : '—');
+    setText('w-swell-dir', d.swell?.direction_deg != null ? `${fmt(d.swell.direction_deg, 0)}° ${degToCompass(d.swell.direction_deg)}` : '—');
+    setText('w-swell-period', d.swell?.period_s != null ? `${fmt(d.swell.period_s, 1)} s` : '—');
+
+    setText('w-current-speed', d.current?.speed_knots != null ? `${fmt(d.current.speed_knots, 2)} kn` : '—');
+    setText('w-current-dir', d.current?.direction_deg != null ? `${fmt(d.current.direction_deg, 0)}° ${degToCompass(d.current.direction_deg)}` : '—');
+
+    if (d.collected_at) setText('w-collected', timeAgo(d.collected_at));
+  } catch (err) {
+    console.warn('[SailTracker mobile] Erreur météo:', err);
+  }
+}
+
+// =============================================================================
+// Stats
+// =============================================================================
+async function fetchStats() {
+  try {
+    const resp = await fetch(`${API_BASE}/api/stats`);
+    if (!resp.ok) return;
+    const d = await resp.json();
+
+    setText('s-distance', d.distance_nm != null ? `${fmt(d.distance_nm, 1)} nm` : '—');
+    setText('s-avg-speed', d.avg_speed_knots != null ? `${fmt(d.avg_speed_knots, 1)} kn` : '—');
+    setText('s-max-speed', d.max_speed_knots != null ? `${fmt(d.max_speed_knots, 1)} kn` : '—');
+    if (d.tracking_since) {
+      const dt = new Date(d.tracking_since);
+      setText('s-since', `${dt.toLocaleDateString('fr-FR')} ${dt.toLocaleTimeString('fr-FR', {hour:'2-digit',minute:'2-digit'})} UTC`);
+    }
+  } catch (err) {
+    console.warn('[SailTracker mobile] Erreur stats:', err);
+  }
+}
+
+// =============================================================================
+// At-sea banner
+// =============================================================================
+async function fetchAtSeaStatus() {
+  try {
+    const r = await fetch('/api/at-sea');
+    if (!r.ok) return;
+    const d = await r.json();
+    const banner = document.getElementById('at-sea-banner');
+    if (d.at_sea) {
+      setText('at-sea-progress', `${d.progress_pct}%`);
+      setText('at-sea-eta', `ETA : ${d.eta || '—'}`);
+      setText('at-sea-dist', `${d.distance_remaining_nm} NM restants`);
+      const link = document.getElementById('at-sea-link');
+      if (d.route_id) link.href = `/passage?route=${d.route_id}`;
+      banner.classList.add('active');
+    } else {
+      banner.classList.remove('active');
+    }
+  } catch(e) { /* silencieux */ }
+}
+
+// =============================================================================
+// Tab navigation + bottom sheet
+// =============================================================================
+function setTab(tab) {
+  const sheet = document.getElementById('bottom-sheet');
+
+  // Update tab buttons
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.tab === tab);
+  });
+
+  if (tab === 'map' || tab === activeTab) {
+    // Tapping same tab or Map tab → close sheet
+    if (tab === activeTab && tab !== 'map') {
+      sheet.classList.remove('open');
+      activeTab = 'map';
+      document.getElementById('tab-map').classList.add('active');
+      return;
+    }
+    sheet.classList.remove('open');
+    activeTab = 'map';
+    return;
+  }
+
+  // Show sheet with correct content
+  document.querySelectorAll('.sheet-content').forEach(el => el.classList.remove('active'));
+  const sheetId = `sheet-${tab}`;
+  const content = document.getElementById(sheetId);
+  if (content) content.classList.add('active');
+  sheet.classList.add('open');
+  activeTab = tab;
+}
+
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => setTab(btn.dataset.tab));
+});
+
+// Tap handle → close sheet
+document.getElementById('sheet-handle').addEventListener('click', () => {
+  const sheet = document.getElementById('bottom-sheet');
+  sheet.classList.remove('open');
+  activeTab = 'map';
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.tab === 'map');
+  });
+});
+
+// =============================================================================
+// FAB — center on boat
+// =============================================================================
+document.getElementById('fab-center').addEventListener('click', () => {
+  if (lastPosition) {
+    map.flyTo([lastPosition.latitude, lastPosition.longitude], Math.max(map.getZoom(), 10), {
+      duration: 1.2,
+    });
+  }
+});
+
+// =============================================================================
+// Tracker control
+// =============================================================================
+async function trackerAction(endpoint, opts) {
+  opts = opts || {};
+  const msg = document.getElementById('tracker-msg');
+  msg.textContent = 'En cours…';
+  try {
+    const resp = await fetch('/api/tracker/' + endpoint, {
+      method: opts.method || 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: opts.body ? JSON.stringify(opts.body) : undefined,
+    });
+    const d = await resp.json();
+    msg.textContent = d.message || (d.success ? 'OK' : ('Erreur : ' + (d.error || '?')));
+    msg.style.color = d.success ? '#4ade80' : '#f87171';
+    if (d.success) await refreshTrackerStatus();
+  } catch(e) {
+    msg.textContent = 'Erreur réseau : ' + e.message;
+    msg.style.color = '#f87171';
+  }
+}
+
+async function refreshTrackerStatus() {
+  try {
+    const d = await (await fetch('/api/tracker/status')).json();
+    const aisEl = document.getElementById('ts-ais-status');
+    aisEl.textContent = d.ais.active ? '✅ En marche' : '🔴 Arrêté';
+    aisEl.style.color = d.ais.active ? '#4ade80' : '#f87171';
+    document.getElementById('ts-ais-age').textContent = d.ais_last.age_minutes != null
+      ? 'il y a ' + d.ais_last.age_minutes + ' min' : '—';
+    document.getElementById('ts-inreach-age').textContent = d.inreach.age_minutes != null
+      ? 'il y a ' + d.inreach.age_minutes + ' min' : '—';
+    document.getElementById('ts-count').textContent = d.positions_count;
+  } catch(e) { /* silencieux */ }
+}
+
+document.getElementById('btn-tracker-ctrl').addEventListener('click', () => {
+  document.getElementById('tracker-modal').classList.add('modal-show');
+  refreshTrackerStatus();
+});
+document.getElementById('btn-close-tracker').addEventListener('click', () => {
+  document.getElementById('tracker-modal').classList.remove('modal-show');
+});
+document.getElementById('tracker-modal').addEventListener('click', e => {
+  if (e.target === e.currentTarget) e.currentTarget.classList.remove('modal-show');
+});
+document.getElementById('btn-ais-start').addEventListener('click', () => trackerAction('start'));
+document.getElementById('btn-ais-stop').addEventListener('click', () => trackerAction('stop'));
+document.getElementById('btn-ais-restart').addEventListener('click', () => trackerAction('restart'));
+document.getElementById('btn-inreach-sync').addEventListener('click', () => trackerAction('sync-inreach'));
+document.getElementById('btn-tracker-reset').addEventListener('click', async () => {
+  const n = document.getElementById('ts-count').textContent;
+  if (!confirm('Supprimer ' + n + ' positions ? Cette action est irréversible.')) return;
+  await trackerAction('reset', { body: { confirm: 'RESET' } });
+});
+
+// =============================================================================
+// Bootstrap
+// =============================================================================
+async function bootstrap() {
+  const loading = document.getElementById('loading');
+
+  try {
+    initMap();
+  } catch (err) {
+    console.error('Erreur initMap:', err);
+    const txt = loading.querySelector('.loading-text');
+    if (txt) txt.textContent = 'Erreur carte : ' + err.message;
+    return;
+  }
+
+  await Promise.allSettled([
+    fetchPosition(),
+    fetchTrack(),
+    fetchWeather(),
+    fetchStats(),
+    fetchAtSeaStatus(),
+  ]);
+
+  loading.classList.add('hidden');
+  setTimeout(() => loading.remove(), 600);
+
+  setInterval(async () => {
+    await fetchPosition();
+    await fetchTrack();
+  }, REFRESH_POSITION_MS);
+
+  setInterval(fetchWeather, REFRESH_WEATHER_MS);
+  setInterval(fetchStats, REFRESH_STATS_MS);
+  setInterval(fetchAtSeaStatus, 5 * 60 * 1000);
+}
+
+bootstrap();
+</script>
+</body>
+</html>

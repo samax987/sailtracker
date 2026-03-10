@@ -55,6 +55,7 @@ _rot.setFormatter(_fmt)
 _con.setFormatter(_fmt)
 logger.addHandler(_rot)
 logger.addHandler(_con)
+logger.propagate = False
 
 
 # =============================================================================

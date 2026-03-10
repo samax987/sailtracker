@@ -50,6 +50,13 @@
     .header-stat { display:flex; flex-direction:column; gap:1px; }
     .header-stat .label { font-size:0.62rem; color:var(--text-dim); text-transform:uppercase; letter-spacing:.08em; }
     .header-stat .value { font-size:0.85rem; font-weight:600; }
+    .engine-badge {
+      display:inline-flex; align-items:center; gap:4px;
+      padding:2px 8px; border-radius:10px; font-size:0.72rem; font-weight:600;
+      cursor:default; white-space:nowrap;
+    }
+    .engine-badge.rust   { background:rgba(74,222,128,0.15); border:1px solid rgba(74,222,128,0.4); color:#4ade80; }
+    .engine-badge.python { background:rgba(250,204,21,0.15);  border:1px solid rgba(250,204,21,0.4);  color:#facc15; }
     .header-actions { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
     .btn {
       background:rgba(74,158,255,0.12); border:1px solid rgba(74,158,255,0.35);
@@ -261,6 +268,10 @@
     <div class="header-stat"><span class="label">Distance</span><span class="value" id="h-distance">—</span></div>
     <div class="header-stat"><span class="label" id="h-duration-label">Durée estimée</span><span class="value" id="h-duration">—</span></div>
     <div class="header-stat"><span class="label">Dernière mise à jour</span><span class="value" id="h-last-update">—</span></div>
+    <div class="header-stat" style="justify-content:flex-end">
+      <span class="label">Moteur</span>
+      <span id="engine-badge" class="engine-badge python" title="Chargement…">🐍 Python</span>
+    </div>
   </div>
 
   <div class="header-actions">
@@ -464,6 +475,7 @@ let windChart = null;
 let map, routeLine, wpMarkers = [];
 let selectedSimIdx = null;
 let allRoutes = [];
+let savedRouteId = null;
 
 // État éditeur
 let editorOpen = false;
@@ -787,6 +799,7 @@ async function createRoute() {
     }
     const newRoute = await resp.json();
     routeId = newRoute.id;
+    savedRouteId = null;
     manualWaypoints = [];
     toggleEditor(false);
     await populateRouteDropdown(routeId);
@@ -919,6 +932,15 @@ async function populateRouteDropdown(selectedId) {
 // =============================================================================
 // Rendu carte
 // =============================================================================
+function clearRouteFromMap() {
+  wpMarkers.forEach(m => map.removeLayer(m)); wpMarkers = [];
+  if (routeLine) { map.removeLayer(routeLine); routeLine = null; }
+  if (windArrowLayer) { map.removeLayer(windArrowLayer); windArrowLayer = null; }
+  if (currentArrowsGroup) { map.removeLayer(currentArrowsGroup); currentArrowsGroup = null; }
+  isochroneLayers.forEach(l => map.removeLayer(l)); isochroneLayers = [];
+  if (optimalRouteLine) { map.removeLayer(optimalRouteLine); optimalRouteLine = null; }
+}
+
 function renderRoute(waypoints, simulations, selectedIdx) {
   wpMarkers.forEach(m => map.removeLayer(m));
   wpMarkers = [];
@@ -1820,6 +1842,10 @@ async function bootstrap() {
     document.getElementById('route-name').value = '';
     document.getElementById('route-preview-info').textContent = 'Récupération position InReach…';
 
+    // Sauvegarder la route courante pour restauration si annulation
+    savedRouteId = routeId;
+    clearRouteFromMap();
+
     // Récupérer la dernière position InReach/AIS
     try {
       const resp = await fetch('/api/position/latest');
@@ -1831,6 +1857,7 @@ async function bootstrap() {
           const ts = pos.timestamp ? new Date(pos.timestamp).toLocaleString('fr-FR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }) : '';
           const src = pos.source === 'inreach' ? 'InReach' : (pos.source || 'GPS');
           manualWaypoints = [{ lat, lon, name: `Départ (${src}${ts ? ' ' + ts : ''})` }];
+          map.setView([lat, lon], 6, { animate: true });
         }
       }
     } catch(e) { /* position non disponible, continuer vide */ }
@@ -1861,6 +1888,10 @@ async function bootstrap() {
 
   document.getElementById('btn-cancel-edit').addEventListener('click', () => {
     toggleEditor(false);
+    if (savedRouteId !== null) {
+      switchRoute(savedRouteId).catch(() => {});
+      savedRouteId = null;
+    }
   });
 
   document.getElementById('btn-create-route').addEventListener('click', createRoute);
@@ -1980,6 +2011,31 @@ async function bootstrap() {
 
   // Auto-refresh toutes les 30 min
   setInterval(refreshData, 30 * 60 * 1000);
+
+// Engine status badge
+async function fetchEngineStatus() {
+  try {
+    const r = await fetch('/api/engine/status');
+    if (!r.ok) return;
+    const d = await r.json();
+    const badge = document.getElementById('engine-badge');
+    if (!badge) return;
+    if (d.engine === 'rust') {
+      badge.className = 'engine-badge rust';
+      const ms = d.last_rust_duration_ms != null ? ' (' + d.last_rust_duration_ms + 'ms)' : '';
+      const ver = d.rust_version && d.rust_version.version ? ' v' + d.rust_version.version : '';
+      badge.textContent = '⚡ Rust';
+      badge.title = 'Rust' + ver + ' — dernier calcul' + ms + (d.benchmark && d.benchmark.rust_ms != null ? ' · bench: ' + d.benchmark.rust_ms + 'ms' : '');
+    } else {
+      badge.className = 'engine-badge python';
+      badge.textContent = '🐍 Python';
+      const fb = d.last_python_fallback ? ' — fallback le ' + d.last_python_fallback : '';
+      badge.title = 'Moteur Python (Rust indisponible)' + fb;
+    }
+  } catch (e) {}
+}
+fetchEngineStatus();
+setInterval(fetchEngineStatus, 60000);
 
   // Bouton Optimiser
   const btnOptimize = document.getElementById('btn-optimize');

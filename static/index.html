@@ -254,15 +254,49 @@
     /* =====================================================================
        Icône voilier SVG (injecté dans un DivIcon Leaflet)
     ===================================================================== */
-    .boat-icon-wrapper {
-      width: 0;
-      height: 0;
-      display: flex;
-      align-items: center;
-      justify-content: center;
+    /* Icône voilier emoji */
+    .boat-icon-root {
+      width: 40px; height: 40px;
+      position: relative;
+      display: flex; align-items: center; justify-content: center;
     }
-    .boat-svg {
-      filter: drop-shadow(0 0 4px rgba(74, 158, 255, 0.8));
+    .boat-emoji-wrap {
+      display: flex; align-items: center; justify-content: center;
+      width: 40px; height: 40px;
+    }
+    .boat-emoji {
+      font-size: 24px;
+      line-height: 1;
+      display: inline-block;
+      transform-origin: center;
+      filter: drop-shadow(0 0 5px rgba(59, 130, 246, 0.9));
+      animation: boatSway 3s ease-in-out infinite;
+    }
+    @keyframes boatSway {
+      0%   { transform: rotate(-3deg); }
+      50%  { transform: rotate(3deg);  }
+      100% { transform: rotate(-3deg); }
+    }
+    .anchor-pulse-ring {
+      position: absolute;
+      width: 30px; height: 30px;
+      border-radius: 50%;
+      border: 1.5px solid #4a9eff;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%) scale(0.6);
+      opacity: 0;
+      pointer-events: none;
+    }
+    .anchor-pulse-ring.active {
+      animation: anchorPulse 2s ease-out infinite;
+    }
+    @keyframes anchorPulse {
+      0%   { transform: translate(-50%, -50%) scale(0.6); opacity: 0.8; }
+      100% { transform: translate(-50%, -50%) scale(2.2); opacity: 0;   }
+    }
+    /* Transition de position Leaflet */
+    .boat-marker-icon {
+      transition: transform 1s ease-out !important;
     }
 
     /* =====================================================================
@@ -686,30 +720,38 @@ function initMap() {
 // =============================================================================
 // Icône voilier SVG orientée selon le cap
 // =============================================================================
-function createBoatIcon(course) {
-  const rotation = (course || 0);
-  const svg = `
-    <svg width="32" height="44" viewBox="0 0 32 44" xmlns="http://www.w3.org/2000/svg"
-         class="boat-svg" style="transform:rotate(${rotation}deg);transform-origin:center center">
-      <!-- Coque -->
-      <path d="M16 40 Q8 36 6 28 L16 4 L26 28 Q24 36 16 40Z"
-            fill="#4a9eff" opacity="0.9"/>
-      <!-- Voile principale -->
-      <path d="M16 6 L16 32 L7 26 Z"
-            fill="white" opacity="0.85"/>
-      <!-- Grand-voile -->
-      <path d="M16 6 L16 30 L25 22 Z"
-            fill="#cce8ff" opacity="0.75"/>
-      <!-- Mât -->
-      <line x1="16" y1="4" x2="16" y2="38" stroke="#0055aa" stroke-width="1.5"/>
-    </svg>`;
-
+function createBoatIcon(course, speed) {
+  const r = course || 0;
+  const moving = speed != null && speed > 0.5;
+  const pulseClass = 'anchor-pulse-ring' + (moving ? '' : ' active');
+  const html = `<div class="boat-icon-root">
+    <div class="${pulseClass}"></div>
+    <div class="boat-emoji-wrap" style="transform:rotate(${r}deg)">
+      <span class="boat-emoji">&#x26F5;</span>
+    </div>
+  </div>`;
   return L.divIcon({
-    html: `<div class="boat-icon-wrapper">${svg}</div>`,
-    iconSize: [0, 0],
-    iconAnchor: [0, 0],
-    className: '',
+    html,
+    iconSize: [40, 40],
+    iconAnchor: [20, 20],
+    popupAnchor: [0, -22],
+    className: 'boat-marker-icon',
   });
+}
+
+// Met à jour le cap et les animations en place (sans recréer l'élément DOM)
+function updateBoatVisuals(course, speed) {
+  if (!boatMarker) return;
+  const el = boatMarker.getElement();
+  if (!el) return;
+  const r = course || 0;
+  const moving = speed != null && speed > 0.5;
+
+  const wrap = el.querySelector('.boat-emoji-wrap');
+  if (wrap) wrap.style.transform = `rotate(${r}deg)`;
+
+  const pulse = el.querySelector('.anchor-pulse-ring');
+  if (pulse) pulse.classList.toggle('active', !moving);
 }
 
 // =============================================================================
@@ -728,15 +770,13 @@ async function fetchPosition() {
     const latlng = [pos.latitude, pos.longitude];
 
     if (!boatMarker) {
-      boatMarker = L.marker(latlng, { icon: createBoatIcon(pos.course), zIndexOffset: 1000 })
+      boatMarker = L.marker(latlng, { icon: createBoatIcon(pos.course, pos.speed_knots), zIndexOffset: 1000 })
         .addTo(map);
       map.setView(latlng, 8);
     } else {
       boatMarker.setLatLng(latlng);
+      updateBoatVisuals(pos.course, pos.speed_knots);
     }
-
-    // Mettre à jour l'icône avec le nouveau cap
-    boatMarker.setIcon(createBoatIcon(pos.course));
 
     // Popup
     const popupContent = buildBoatPopup(pos);
@@ -796,9 +836,10 @@ async function fetchWeather() {
     // Vent
     const ws = d.wind?.speed_kmh;
     const wd = d.wind?.direction_deg;
-    setText('w-wind-speed', ws != null ? `${fmt(ws, 1)} km/h` : '—');
+    const ws_kts = ws != null ? ws * 0.5399 : null;
+    setText('w-wind-speed', ws_kts != null ? `${fmt(ws_kts, 1)} kts` : '—');
     setText('w-wind-dir', wd != null ? `${fmt(wd, 0)}° ${degToCompass(wd)}` : '—');
-    setText('w-wind-gusts', d.wind?.gusts_kmh != null ? `${fmt(d.wind.gusts_kmh, 1)} km/h` : '—');
+    setText('w-wind-gusts', d.wind?.gusts_kmh != null ? `${fmt(d.wind.gusts_kmh * 0.5399, 1)} kts` : '—');
     if (wd != null) {
       document.getElementById('w-wind-arrow').style.transform = `rotate(${wd}deg)`;
     }

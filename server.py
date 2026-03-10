@@ -14,6 +14,8 @@ import sqlite3
 import subprocess
 import threading
 import uuid
+import re
+MOBILE_UA = re.compile(r"Android|iPhone|iPad|iPod|Mobile|BlackBerry|IEMobile", re.IGNORECASE)
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -81,6 +83,15 @@ CORS(app)
 from briefing import generate_weather_briefing
 from polars import get_polar, reload_polar, update_polars_from_observations, PolarDiagram
 from routing import isochrone_routing, GribWindProvider
+try:
+    from rust_engine import engine_available, engine_state, rust_polar, rust_version
+    _rust_engine_imported = True
+except ImportError:
+    _rust_engine_imported = False
+    def engine_available(): return False
+    def engine_state(): return {"rust_binary_exists": False, "rust_binary_path": "", "last_rust_call": None, "last_rust_duration_ms": None, "last_python_fallback": None, "last_python_command": None}
+    def rust_polar(twa, tws): return None
+    def rust_version(): return None
 
 # Tâches de routage asynchrones : {task_id: {status, progress, result, error}}
 _routing_tasks: dict = {}
@@ -155,7 +166,14 @@ def great_circle_waypoints(lat1, lon1, name1, lat2, lon2, name2, spacing_nm=250.
 
 @app.route("/")
 def index():
-    return send_from_directory(str(STATIC_DIR), "index.html")
+    ua = request.headers.get('User-Agent', '')
+    if MOBILE_UA.search(ua):
+        return send_from_directory(str(STATIC_DIR), 'index_mobile.html')
+    return send_from_directory(str(STATIC_DIR), 'index.html')
+
+@app.route("/mobile")
+def mobile_index():
+    return send_from_directory(str(STATIC_DIR), 'index_mobile.html')
 
 @app.route("/passage")
 def passage_page():
@@ -1593,6 +1611,51 @@ def api_stats():
         "tracking_since": row["first_ts"], "last_update": row["last_ts"],
         "total_positions": row["total"],
     })
+
+@app.route("/api/engine/status")
+def api_engine_status():
+    """Statut et benchmark du moteur de calcul Rust."""
+    import time as _time
+    state = engine_state()
+
+    # Version du binaire
+    ver = rust_version() if state["rust_binary_exists"] else None
+
+    # Benchmark polar TWA=90 TWS=15 sur Rust
+    bench_rust_ms = None
+    bench_python_ms = None
+
+    if state["rust_binary_exists"]:
+        try:
+            t0 = _time.monotonic()
+            rust_polar(90.0, 15.0)
+            bench_rust_ms = round((_time.monotonic() - t0) * 1000, 1)
+        except Exception:
+            pass
+
+    # Benchmark Python (polaire interne)
+    try:
+        t0 = _time.monotonic()
+        get_polar(90.0, 15.0)
+        bench_python_ms = round((_time.monotonic() - t0) * 1000, 1)
+    except Exception:
+        pass
+
+    active = engine_available()
+    return jsonify({
+        "engine": "rust" if active else "python",
+        "rust_binary_exists": state["rust_binary_exists"],
+        "rust_binary_path": state["rust_binary_path"],
+        "rust_version": ver,
+        "last_rust_call": state["last_rust_call"],
+        "last_rust_duration_ms": state["last_rust_duration_ms"],
+        "last_python_fallback": state["last_python_fallback"],
+        "benchmark": {
+            "rust_ms": bench_rust_ms,
+            "python_ms": bench_python_ms,
+        }
+    })
+
 
 @app.route("/api/at-sea")
 def api_at_sea():
