@@ -922,6 +922,46 @@ def api_polars_comparison():
     except Exception as e:
         return jsonify({"comparison": [], "error": str(e)})
 
+@app.route("/api/polars/calibrate", methods=["POST"])
+def api_polars_calibrate():
+    """Lance la calibration des polaires depuis les observations InReach."""
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["venv/bin/python3", "polar_calibrator.py"],
+            cwd=str(BASE_DIR),
+            capture_output=True, text=True, timeout=120
+        )
+        # Compter les nouvelles observations et cases calibrées depuis le log
+        new_obs = 0
+        updated_cells = 0
+        for line in (result.stdout + result.stderr).splitlines():
+            import re
+            m = re.search(r"(\d+) nouvelles observations", line)
+            if m: new_obs = int(m.group(1))
+            m = re.search(r"(\d+) cases mises à jour", line)
+            if m: updated_cells = int(m.group(1))
+        # Lire les dernières lignes du log fichier
+        try:
+            log_path = BASE_DIR / "logs" / "polar_calibration.log"
+            lines = log_path.read_text().splitlines()[-10:]
+            for line in lines:
+                import re
+                m = re.search(r"(\d+) nouvelles observations", line)
+                if m: new_obs = int(m.group(1))
+                m = re.search(r"(\d+) cases mises à jour", line)
+                if m: updated_cells = int(m.group(1))
+        except Exception:
+            pass
+        if result.returncode != 0 and not new_obs:
+            return jsonify({"success": False, "error": result.stderr[-300:] or "Erreur inconnue"})
+        return jsonify({"success": True, "new_obs": new_obs, "updated_cells": updated_cells})
+    except subprocess.TimeoutExpired:
+        return jsonify({"success": False, "error": "Timeout (>120s)"})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
+
+
 # =============================================================================
 # API : Routage isochrones
 # =============================================================================

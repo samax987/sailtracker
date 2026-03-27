@@ -176,7 +176,9 @@ def process_position_pair(pos1: dict, pos2: dict) -> dict | None:
 
     try:
         t1 = datetime.fromisoformat(pos1["timestamp"].replace("Z", "+00:00"))
+        if t1.tzinfo is None: t1 = t1.replace(tzinfo=timezone.utc)
         t2 = datetime.fromisoformat(pos2["timestamp"].replace("Z", "+00:00"))
+        if t2.tzinfo is None: t2 = t2.replace(tzinfo=timezone.utc)
     except Exception:
         return None
 
