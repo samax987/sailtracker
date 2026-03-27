@@ -957,10 +957,24 @@ def api_optimize_route(route_id):
 
     def run_routing():
         try:
-            polar = get_polar()
+            polar = get_polar(DB_PATH)
             wind_prov = get_wind_provider()
             start = (waypoints[0]["lat"], waypoints[0]["lon"])
             end = (waypoints[-1]["lat"], waypoints[-1]["lon"])
+
+            # Vérification de sécurité : si la destination est manifestement
+            # incorrecte (trop loin de Barbados alors que la route va vers les Caraïbes),
+            # journaliser un avertissement. La correction réelle se fait dans la DB
+            # (voir /tmp/fix_db_routes.py ou l'API move-waypoint).
+            BARBADOS_REF = (13.07, -59.62)
+            dist_to_barbados = haversine_nm(end[0], end[1], BARBADOS_REF[0], BARBADOS_REF[1])
+            if dist_to_barbados > 100:
+                logger.warning(
+                    "Optimisation route %d: destination (%.4f, %.4f) est à %.0f nm de Barbados — "
+                    "vérifier le dernier waypoint de la route",
+                    route_id, end[0], end[1], dist_to_barbados
+                )
+
             result = isochrone_routing(start, end, departure_dt, polar, wind_prov)
             # Sauvegarder le résultat en DB
             db2 = get_db()

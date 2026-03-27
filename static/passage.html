@@ -939,6 +939,7 @@ function clearRouteFromMap() {
   if (currentArrowsGroup) { map.removeLayer(currentArrowsGroup); currentArrowsGroup = null; }
   isochroneLayers.forEach(l => map.removeLayer(l)); isochroneLayers = [];
   if (optimalRouteLine) { map.removeLayer(optimalRouteLine); optimalRouteLine = null; }
+  optimalRouteMarkers.forEach(m => map.removeLayer(m)); optimalRouteMarkers = [];
 }
 
 function renderRoute(waypoints, simulations, selectedIdx) {
@@ -2049,6 +2050,7 @@ bootstrap();
 // =============================================================================
 let isochroneLayers = [];
 let optimalRouteLine = null;
+let optimalRouteMarkers = [];  // cercles waypoints intermédiaires de la route optimale
 let currentOptimizeTask = null;
 let optimizePolling = null;
 
@@ -2170,9 +2172,11 @@ function displayOptimizeResult(result) {
     wps.forEach((w, i) => {
       if (i === 0 || i === wps.length - 1) return;
       const eta = w[3] ? new Date(w[3]).toUTCString().slice(5, 22) : '?';
-      L.circleMarker([w[0], w[1]], {radius: 3, color: '#4ade80', fillColor: '#4ade80', fillOpacity: 0.8})
-       .bindTooltip(`ETA: ${eta}<br>Cap: ${w[4]}° | ${w[5]} kts<br>TWA: ${w[6]}° | TWS: ${w[7]} kts`, {sticky: true})
-       .addTo(map);
+      optimalRouteMarkers.push(
+        L.circleMarker([w[0], w[1]], {radius: 3, color: '#4ade80', fillColor: '#4ade80', fillOpacity: 0.8})
+         .bindTooltip(`ETA: ${eta}<br>Cap: ${w[4]}° | ${w[5]} kts<br>TWA: ${w[6]}° | TWS: ${w[7]} kts`, {sticky: true})
+         .addTo(map)
+      );
     });
 
     map.fitBounds(optimalRouteLine.getBounds(), {padding: [30, 30]});
@@ -2200,6 +2204,8 @@ function clearOptimize() {
   isochroneLayers.forEach(l => map.removeLayer(l));
   isochroneLayers = [];
   if (optimalRouteLine) { map.removeLayer(optimalRouteLine); optimalRouteLine = null; }
+  optimalRouteMarkers.forEach(m => map.removeLayer(m));
+  optimalRouteMarkers = [];
   document.getElementById('optimize-result-panel').style.display = 'none';
 }
 </script>

@@ -35,7 +35,7 @@ pub fn run(input: String, polars_path: &str) -> Result<String, String> {
     let inp: RouteInput = serde_json::from_str(&input)
         .map_err(|e| format!("JSON invalide pour la commande route: {}", e))?;
 
-    let polar = PolarTable::from_csv(polars_path).ok();
+    let polar = PolarTable::load(polars_path).ok();
 
     let result = calculate_route(&inp, polar.as_ref())?;
     serde_json::to_string(&result).map_err(|e| e.to_string())

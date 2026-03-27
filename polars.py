@@ -5,6 +5,8 @@ polars.py — Gestion des polaires de vitesse POLLEN 1
 
 import csv
 import logging
+import sqlite3
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -14,6 +16,7 @@ logger = logging.getLogger("sailtracker_server")
 
 BASE_DIR = Path(__file__).parent
 DEFAULT_POLAR_PATH = BASE_DIR / "data" / "polars" / "pollen1.csv"
+DB_PATH = BASE_DIR / "sailtracker.db"
 
 
 class PolarDiagram:
@@ -58,6 +61,59 @@ class PolarDiagram:
             fill_value=None  # extrapolation
         )
 
+    @classmethod
+    def load_from_db(cls, db_path=None) -> 'PolarDiagram':
+        """Charge le polaire depuis polar_matrix SQLite."""
+        path = db_path or DB_PATH
+        conn = sqlite3.connect(path)
+        rows = conn.execute(
+            "SELECT twa_deg, tws_kts, speed_kts FROM polar_matrix ORDER BY twa_deg, tws_kts"
+        ).fetchall()
+        conn.close()
+
+        if not rows:
+            raise ValueError("polar_matrix est vide")
+
+        # Extraire les valeurs uniques triées
+        twa_set = sorted(set(r[0] for r in rows))
+        tws_set = sorted(set(r[1] for r in rows))
+
+        twa_arr = np.array(twa_set, dtype=float)
+        tws_arr = np.array(tws_set, dtype=float)
+        speeds = np.zeros((len(twa_set), len(tws_set)), dtype=float)
+
+        twa_idx = {v: i for i, v in enumerate(twa_set)}
+        tws_idx = {v: i for i, v in enumerate(tws_set)}
+
+        for twa, tws, spd in rows:
+            speeds[twa_idx[twa], tws_idx[tws]] = spd
+
+        obj = cls.__new__(cls)
+        obj.filepath = DEFAULT_POLAR_PATH
+        obj._twa_arr = twa_arr
+        obj._tws_arr = tws_arr
+        obj._speeds = speeds
+        obj._interp = None
+        obj._build_interp()
+        return obj
+
+    def save_to_db(self, db_path=None):
+        """Sauvegarde les polaires dans polar_matrix (UPSERT)."""
+        path = db_path or DB_PATH
+        conn = sqlite3.connect(path)
+        now = datetime.utcnow().isoformat()
+        for i, twa in enumerate(self._twa_arr):
+            for j, tws in enumerate(self._tws_arr):
+                conn.execute("""
+                    INSERT INTO polar_matrix (twa_deg, tws_kts, speed_kts, calibrated_at)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(twa_deg, tws_kts) DO UPDATE SET
+                        speed_kts = excluded.speed_kts,
+                        calibrated_at = excluded.calibrated_at
+                """, (float(twa), float(tws), float(self._speeds[i][j]), now))
+        conn.commit()
+        conn.close()
+
     def get_boat_speed(self, twa: float, tws: float) -> float:
         """Retourne la vitesse bateau en nœuds pour un TWA/TWS donné."""
         twa = max(0.0, min(180.0, abs(float(twa))))
@@ -81,7 +137,7 @@ class PolarDiagram:
         }
 
     def save(self, filepath=None):
-        """Sauvegarde les polaires en CSV."""
+        """Sauvegarde les polaires en CSV (backup/export)."""
         path = Path(filepath) if filepath else self.filepath
         with open(path, 'w', newline='', encoding='utf-8') as f:
             writer = csv.writer(f, delimiter=';')
@@ -110,6 +166,7 @@ def update_polars_from_observations(db, polar: PolarDiagram, min_obs: int = 5) -
     """
     Calibre les polaires en blendant les observations réelles.
     Retourne le nombre de cases mises à jour.
+    Écrit les cases calibrées dans polar_matrix (source de vérité).
     """
     c = db.cursor()
 
@@ -133,6 +190,7 @@ def update_polars_from_observations(db, polar: PolarDiagram, min_obs: int = 5) -
     twa_bins = polar.get_twa_range()
     tws_bins = polar.get_tws_range()
     updated = 0
+    now = datetime.utcnow().isoformat()
 
     for twa_center in twa_bins:
         for tws_center in tws_bins:
@@ -152,28 +210,36 @@ def update_polars_from_observations(db, polar: PolarDiagram, min_obs: int = 5) -
             blend = min(0.9, 0.3 + 0.6 * (n - min_obs) / 45.0)
             blended = (1 - blend) * theoretical + blend * observed_median
             polar.update_speed(twa_center, tws_center, blended)
+
+            # UPSERT dans polar_matrix (source de vérité)
+            c.execute("""
+                INSERT INTO polar_matrix (twa_deg, tws_kts, speed_kts, n_obs, calibrated_at, source)
+                VALUES (?, ?, ?, ?, ?, 'calibrated')
+                ON CONFLICT(twa_deg, tws_kts) DO UPDATE SET
+                    speed_kts = excluded.speed_kts,
+                    n_obs = excluded.n_obs,
+                    calibrated_at = excluded.calibrated_at,
+                    source = 'calibrated'
+            """, (twa_center, tws_center, blended, n, now))
             updated += 1
 
     if updated > 0:
-        polar.save()
+        db.commit()
+        polar.save()  # CSV backup/export seulement
         logger.info("Polaires calibrées : %d cases mises à jour", updated)
 
     return updated
 
 
-# Singleton partagé
-_polar_instance = None
-
-
-def get_polar() -> PolarDiagram:
-    global _polar_instance
-    if _polar_instance is None:
-        _polar_instance = PolarDiagram()
-        logger.info("PolarDiagram chargé depuis %s", _polar_instance.filepath)
-    return _polar_instance
+def get_polar(db_path=None) -> PolarDiagram:
+    """Charge le polaire depuis DB à chaque appel (pas de singleton)."""
+    path = db_path or DB_PATH
+    try:
+        return PolarDiagram.load_from_db(path)
+    except Exception as e:
+        logger.warning("Fallback CSV (DB indisponible: %s)", e)
+        return PolarDiagram()
 
 
 def reload_polar():
-    global _polar_instance
-    _polar_instance = PolarDiagram()
-    return _polar_instance
+    return get_polar()

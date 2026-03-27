@@ -221,12 +221,12 @@ def isochrone_routing(
     departure_dt: datetime,
     polar,
     wind_provider: GribWindProvider,
-    time_step_h: float = 3.0,
+    time_step_h: float = 1.0,
     angle_step: int = 5,
-    max_steps: int = 200,
-    arrival_radius_nm: float = 15.0,
-    max_points_per_front: int = 300,
-    sector_deg: float = 3.0,
+    max_steps: int = 720,
+    arrival_radius_nm: float = 50.0,
+    max_points_per_front: int = 500,
+    cell_deg: float = 0.25,
 ) -> dict:
     """
     Routage par isochrones.
@@ -329,8 +329,7 @@ def isochrone_routing(
             break
 
         # Pruning par secteur angulaire autour de l'axe start→end
-        pruned = _prune_front(new_points, lat_s, lon_s, lat_e, lon_e,
-                               sector_deg, max_points_per_front)
+        pruned = _prune_front(new_points, lat_e, lon_e, cell_deg, max_points_per_front)
         front = pruned
 
         # Stocker l'isochrone
@@ -346,10 +345,19 @@ def isochrone_routing(
             best_arrival = min(front, key=lambda p: haversine_nm(p["lat"], p["lon"], lat_e, lon_e))
 
     # Backtrack pour reconstruire la route
-    waypoints = _backtrack(best_arrival, departure_dt, time_step_h)
+    # Calculer le temps additionnel pour le segment final vers la destination exacte
+    extra_h = 0.0
+    if best_arrival is not None:
+        dist_remaining = haversine_nm(best_arrival["lat"], best_arrival["lon"], lat_e, lon_e)
+        if dist_remaining > 0.1:
+            final_speed = best_arrival["speed"] if best_arrival["speed"] > 0.5 else 6.0
+            extra_h = dist_remaining / final_speed
+
+    waypoints = _backtrack(best_arrival, departure_dt, time_step_h,
+                           final_dest=(lat_e, lon_e), extra_h=extra_h)
 
     total_steps = best_arrival["step"] if best_arrival else max_steps
-    duration_h = total_steps * time_step_h
+    duration_h = total_steps * time_step_h + extra_h
 
     return {
         "waypoints": waypoints,
@@ -367,32 +375,29 @@ def isochrone_routing(
 
 def _prune_front(
     points: list,
-    lat_s: float, lon_s: float,
     lat_e: float, lon_e: float,
-    sector_deg: float,
+    cell_deg: float,
     max_points: int,
 ) -> list:
     """
-    Pruning : par secteur de sector_deg° autour du cap start→end,
-    garder le point le plus avancé (distance depuis start la plus grande).
+    Pruning par grille geographique : cellule cell_deg x cell_deg,
+    garder le point le plus proche de la destination par cellule.
+    Evite l'elimination des points proches de la destination (bug du pruning par secteur).
     """
-    n_sectors = int(360 / sector_deg)
-    sectors: Dict[int, dict] = {}
+    best_by_cell: Dict[tuple, dict] = {}
 
     for pt in points:
-        # Angle de ce point vu depuis le start
-        b = bearing(lat_s, lon_s, pt["lat"], pt["lon"])
-        sector_id = int(b / sector_deg) % n_sectors
-        dist = haversine_nm(lat_s, lon_s, pt["lat"], pt["lon"])
+        cell = (
+            int(pt["lat"] / cell_deg),
+            int(pt["lon"] / cell_deg),
+        )
+        d = haversine_nm(pt["lat"], pt["lon"], lat_e, lon_e)
+        cur = best_by_cell.get(cell)
+        if cur is None or d < haversine_nm(cur["lat"], cur["lon"], lat_e, lon_e):
+            best_by_cell[cell] = pt
 
-        if sector_id not in sectors or dist > haversine_nm(lat_s, lon_s,
-                                                            sectors[sector_id]["lat"],
-                                                            sectors[sector_id]["lon"]):
-            sectors[sector_id] = pt
+    pruned = list(best_by_cell.values())
 
-    pruned = list(sectors.values())
-
-    # Si trop de points, garder les max_points les plus proches de la destination
     if len(pruned) > max_points:
         pruned.sort(key=lambda p: haversine_nm(p["lat"], p["lon"], lat_e, lon_e))
         pruned = pruned[:max_points]
@@ -400,8 +405,13 @@ def _prune_front(
     return pruned
 
 
-def _backtrack(arrival_pt: Optional[dict], departure_dt: datetime, time_step_h: float) -> list:
-    """Remonte le chemin depuis l'arrivée jusqu'au départ."""
+def _backtrack(arrival_pt: Optional[dict], departure_dt: datetime, time_step_h: float,
+               final_dest: Optional[tuple] = None, extra_h: float = 0.0) -> list:
+    """
+    Remonte le chemin depuis l'arrivée jusqu'au départ.
+    Si final_dest est fourni, ajoute la destination exacte comme dernier waypoint
+    (le dernier point du backtrack peut être jusqu'à arrival_radius_nm de la destination).
+    """
     if arrival_pt is None:
         return []
 
@@ -422,4 +432,89 @@ def _backtrack(arrival_pt: Optional[dict], departure_dt: datetime, time_step_h: 
         pt = pt["parent"]
 
     path.reverse()
+
+    # Ajouter la destination exacte si elle est différente du dernier point reconstruit
+    if final_dest is not None and path:
+        last = path[-1]
+        lat_e, lon_e = final_dest
+        dist = haversine_nm(last[0], last[1], lat_e, lon_e)
+        if dist > 0.1:
+            total_h = arrival_pt["step"] * time_step_h + extra_h
+            eta_dest = departure_dt + timedelta(hours=total_h)
+            hdg_final = bearing(last[0], last[1], lat_e, lon_e)
+            path.append([
+                round(lat_e, 5),
+                round(lon_e, 5),
+                arrival_pt["step"],
+                eta_dest.isoformat(),
+                round(hdg_final, 1),
+                last[5],  # vitesse du dernier segment
+                last[6],  # twa
+                last[7],  # tws
+            ])
+
     return path
+
+# =============================================================================
+# Grille de vent pour le moteur Rust isochrone
+# =============================================================================
+
+def build_wind_grid_for_rust(
+    wind_prov: GribWindProvider,
+    departure_dt: datetime,
+    hours_ahead: int = 30 * 24,
+    time_step_h: int = 6,
+    lat_min: float = 7.0,
+    lat_max: float = 26.0,
+    lon_min: float = -70.0,
+    lon_max: float = -14.0,
+    spatial_step: float = 2.0,
+) -> list:
+    """
+    Echantillonne GribWindProvider sur une grille reguliere et retourne
+    le format wind_grid attendu par le moteur Rust (OptimizeInput.wind_grid).
+
+    Retourne une liste de dicts :
+      [{"time": "ISO", "points": [{"lat":..,"lon":..,"wind_speed_kts":..,"wind_dir_deg":..}]}, ...]
+    """
+    if departure_dt.tzinfo is None:
+        departure_dt = departure_dt.replace(tzinfo=timezone.utc)
+
+    lat_values = []
+    lat = lat_min
+    while lat <= lat_max + 0.001:
+        lat_values.append(round(lat, 2))
+        lat += spatial_step
+
+    lon_values = []
+    lon = lon_min
+    while lon <= lon_max + 0.001:
+        lon_values.append(round(lon, 2))
+        lon += spatial_step
+
+    n_pts_per_slot = len(lat_values) * len(lon_values)
+    slots = []
+    n_slots = max(1, int(hours_ahead / time_step_h))
+    for i in range(n_slots):
+        t = departure_dt + timedelta(hours=i * time_step_h)
+        points = []
+        for lat in lat_values:
+            for lon in lon_values:
+                twd, tws = wind_prov.get_wind(t, lat, lon)
+                points.append({
+                    "lat": lat,
+                    "lon": lon,
+                    "wind_speed_kts": round(float(tws), 2),
+                    "wind_dir_deg": round(float(twd), 1),
+                })
+        slots.append({
+            "time": t.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "points": points,
+        })
+
+    logger.info(
+        "build_wind_grid_for_rust: %d slots x %d pts = %d total wind points",
+        len(slots), n_pts_per_slot, len(slots) * n_pts_per_slot,
+    )
+    return slots
+

@@ -1,5 +1,6 @@
 use crate::geo::calc_twa;
 use csv::ReaderBuilder;
+use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use serde_json;
 use std::f64::consts::PI;
@@ -72,6 +73,53 @@ impl PolarTable {
         })
     }
 
+
+    pub fn from_sqlite(db_path: &str) -> Result<Self, String> {
+        let conn = Connection::open(db_path)
+            .map_err(|e| format!("DB open error: {}", e))?;
+
+        let mut stmt = conn
+            .prepare("SELECT twa_deg, tws_kts, speed_kts FROM polar_matrix ORDER BY twa_deg, tws_kts")
+            .map_err(|e| format!("Prepare error: {}", e))?;
+
+        let rows_data: Vec<(f64, f64, f64)> = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .map_err(|e| format!("Query error: {}", e))?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        if rows_data.is_empty() {
+            return Err("polar_matrix est vide".to_string());
+        }
+
+        let mut twa_set: Vec<f64> = rows_data.iter().map(|r| r.0).collect();
+        twa_set.dedup();
+        let mut tws_set: Vec<f64> = rows_data.iter().map(|r| r.1).collect();
+        tws_set.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        tws_set.dedup();
+
+        let mut speeds = vec![vec![0.0f64; tws_set.len()]; twa_set.len()];
+        for (twa, tws, spd) in &rows_data {
+            if let (Some(ti), Some(wi)) = (
+                twa_set.iter().position(|v| (v - twa).abs() < 0.01),
+                tws_set.iter().position(|v| (v - tws).abs() < 0.01),
+            ) {
+                speeds[ti][wi] = *spd;
+            }
+        }
+
+        Ok(PolarTable { twa_values: twa_set, tws_values: tws_set, speeds })
+    }
+
+    /// Auto-detect: .db → SQLite, sinon → CSV
+    pub fn load(path: &str) -> Result<Self, String> {
+        if path.ends_with(".db") {
+            Self::from_sqlite(path)
+        } else {
+            Self::from_csv(path)
+        }
+    }
+
     /// Interpolation bilinéaire TWA × TWS → vitesse bateau (nœuds)
     pub fn get_speed(&self, twa: f64, tws: f64) -> f64 {
         let twa = twa.clamp(self.twa_values[0], *self.twa_values.last().unwrap());
@@ -136,7 +184,7 @@ pub fn run(input: String, polars_path: &str) -> Result<String, String> {
     let inp: PolarInput = serde_json::from_str(&input)
         .map_err(|e| format!("JSON invalide pour la commande polar: {}", e))?;
 
-    let table = PolarTable::from_csv(polars_path)?;
+    let table = PolarTable::load(polars_path)?;
 
     let speed = table.get_speed(inp.twa, inp.tws);
     let vmg = table.get_vmg(inp.twa, inp.tws);

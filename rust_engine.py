@@ -15,7 +15,7 @@ from pathlib import Path
 
 _BASE = Path("/var/www/sailtracker")
 ENGINE_PATH = _BASE / "engine" / "target" / "release" / "sailtracker-engine"
-POLARS_PATH = str(_BASE / "data" / "polars" / "pollen1.csv")
+POLARS_PATH = str(_BASE / "sailtracker.db")
 
 # Timeout par commande (secondes)
 TIMEOUTS = {
