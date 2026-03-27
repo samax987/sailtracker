@@ -2104,6 +2104,11 @@ async function runOptimize() {
         document.getElementById('opt-progress-text').textContent = `Calcul en cours… ${Math.round(elapsed)}s`;
 
         const sr = await fetch(`/api/passage/routes/${routeId}/optimize/status?task_id=${currentOptimizeTask}`);
+        if (!sr.ok) {
+          clearInterval(optimizePolling); optimizePolling = null;
+          showOptError('Tache perdue (serveur redemarre?) — relancer');
+          return;
+        }
         const sd = await sr.json();
         if (sd.status === 'done') {
           clearInterval(optimizePolling); optimizePolling = null;
@@ -2112,7 +2117,7 @@ async function runOptimize() {
           clearInterval(optimizePolling); optimizePolling = null;
           showOptError(sd.error || 'Erreur de calcul');
         }
-      } catch(e) {}
+      } catch(e) { clearInterval(optimizePolling); optimizePolling = null; showOptError('Erreur reseau: ' + e.message); }
     }, 2000);
   } catch(e) {
     showOptError(e.message);

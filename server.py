@@ -14,6 +14,7 @@ import sqlite3
 import subprocess
 import threading
 import uuid
+import concurrent.futures
 import re
 MOBILE_UA = re.compile(r"Android|iPhone|iPad|iPod|Mobile|BlackBerry|IEMobile", re.IGNORECASE)
 from datetime import datetime, timezone
@@ -955,32 +956,25 @@ def api_optimize_route(route_id):
     with _routing_tasks_lock:
         _routing_tasks[task_id] = {"status": "computing", "progress": 0, "result": None, "error": None}
 
+    def _do_routing():
+        polar = get_polar(DB_PATH)
+        wind_prov = get_wind_provider()
+        s = (waypoints[0]["lat"], waypoints[0]["lon"])
+        e = (waypoints[-1]["lat"], waypoints[-1]["lon"])
+        return isochrone_routing(s, e, departure_dt, polar, wind_prov)
+
     def run_routing():
         try:
-            polar = get_polar(DB_PATH)
-            wind_prov = get_wind_provider()
-            start = (waypoints[0]["lat"], waypoints[0]["lon"])
-            end = (waypoints[-1]["lat"], waypoints[-1]["lon"])
-
-            # Vérification de sécurité : si la destination est manifestement
-            # incorrecte (trop loin de Barbados alors que la route va vers les Caraïbes),
-            # journaliser un avertissement. La correction réelle se fait dans la DB
-            # (voir /tmp/fix_db_routes.py ou l'API move-waypoint).
-            BARBADOS_REF = (13.07, -59.62)
-            dist_to_barbados = haversine_nm(end[0], end[1], BARBADOS_REF[0], BARBADOS_REF[1])
-            if dist_to_barbados > 100:
-                logger.warning(
-                    "Optimisation route %d: destination (%.4f, %.4f) est à %.0f nm de Barbados — "
-                    "vérifier le dernier waypoint de la route",
-                    route_id, end[0], end[1], dist_to_barbados
-                )
-
-            result = isochrone_routing(start, end, departure_dt, polar, wind_prov)
-            # Sauvegarder le résultat en DB
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(_do_routing)
+                try:
+                    result = future.result(timeout=90)
+                except concurrent.futures.TimeoutError:
+                    future.cancel()
+                    raise RuntimeError("Calcul interrompu apres 90s")
             db2 = get_db()
             db2.execute(
-                """INSERT INTO route_optimizations (route_id, computed_at, departure, result_json)
-                   VALUES (?, datetime('now'), ?, ?)""",
+                "INSERT INTO route_optimizations (route_id, computed_at, departure, result_json) VALUES (?, datetime('now'), ?, ?)",
                 (route_id, departure_str, json.dumps(result))
             )
             db2.commit()
@@ -990,7 +984,7 @@ def api_optimize_route(route_id):
                 _routing_tasks[task_id]["result"] = result
                 _routing_tasks[task_id]["progress"] = 100
         except Exception as ex:
-            logger.error("Erreur routage tâche %s: %s", task_id, ex)
+            logger.error("Erreur routage tache %s: %s", task_id, ex)
             with _routing_tasks_lock:
                 _routing_tasks[task_id]["status"] = "error"
                 _routing_tasks[task_id]["error"] = str(ex)

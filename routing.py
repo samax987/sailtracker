@@ -221,12 +221,12 @@ def isochrone_routing(
     departure_dt: datetime,
     polar,
     wind_provider: GribWindProvider,
-    time_step_h: float = 1.0,
+    time_step_h: float = 2.0,
     angle_step: int = 5,
-    max_steps: int = 720,
-    arrival_radius_nm: float = 50.0,
-    max_points_per_front: int = 500,
-    cell_deg: float = 0.25,
+    max_steps: int = 200,
+    arrival_radius_nm: float = 25.0,
+    max_points_per_front: int = 200,
+    cell_deg: float = 0.5,
 ) -> dict:
     """
     Routage par isochrones.
