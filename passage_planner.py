@@ -868,9 +868,27 @@ def main():
         logger.info("Meilleure fenêtre : %s (score=%.0f)", best["departure_date"][:10], best["overall_score"])
 
         if best["overall_score"] >= 70:
-            msg = build_telegram_message(route, best)
-            if send_telegram(msg):
-                logger.info("Alerte Telegram envoyée !")
+            # Ne pas envoyer si le bateau est en mer (éviter le spam routes)
+            at_sea = False
+            last_pos = conn.execute(
+                "SELECT timestamp, speed_knots FROM positions WHERE source='inreach' ORDER BY timestamp DESC LIMIT 1"
+            ).fetchone()
+            if last_pos:
+                try:
+                    ts = datetime.fromisoformat(last_pos["timestamp"].replace("Z", "+00:00"))
+                    if ts.tzinfo is None:
+                        ts = ts.replace(tzinfo=timezone.utc)
+                    age_min = (datetime.now(timezone.utc) - ts).total_seconds() / 60
+                    spd = last_pos["speed_knots"] or 0
+                    if age_min < 360 and spd >= 1.5:
+                        at_sea = True
+                        logger.info("Bateau en mer (spd=%.1f kts, pos il y a %.0f min) — Telegram route ignoré", spd, age_min)
+                except Exception:
+                    pass
+            if not at_sea:
+                msg = build_telegram_message(route, best)
+                if send_telegram(msg):
+                    logger.info("Alerte Telegram envoyée !")
 
     except Exception as e:
         logger.error("Erreur lors du calcul : %s", e, exc_info=True)

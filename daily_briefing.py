@@ -82,7 +82,7 @@ def get_at_sea_status(conn):
         return None
 
     age_min = minutes_ago(pos["timestamp"])
-    if age_min is None or age_min > 120:
+    if age_min is None or age_min > 360:
         return None
 
     speed = pos["speed_knots"] or 0
@@ -189,23 +189,26 @@ def wind_dir_to_cardinal(deg):
     return dirs[round(deg / 22.5) % 16]
 
 
-def build_at_sea_message(status, wx):
+def build_at_sea_message(status, wx, forecast_days=None):
     wind_str = f"{wx['wind_knots']} kts {wind_dir_to_cardinal(wx['wind_dir'])} (rafales {wx['gusts_knots']} kts)" if wx else "—"
     wave_str = f"{wx['wave_m']:.1f} m" if wx and wx['wave_m'] else "—"
     swell_str = f"{wx['swell_m']:.1f} m" if wx and wx['swell_m'] else "—"
+    forecast_txt = format_3day_forecast(forecast_days) if forecast_days else "  Indisponible"
     return (
-        f"<b>⛵ TRAVERSÉE EN COURS — Rapport 07h00 UTC</b>\n\n"
+        f"<b>⛵ POLLEN — Bulletin de bord {datetime.now(timezone.utc).strftime('%d/%m %Hh')} UTC</b>\n\n"
         f"<b>Route :</b> {status['route_name']}\n"
-        f"<b>Position :</b> {status['lat']:.3f}°N, {status['lon']:.3f}°E (il y a {status['age_min']} min)\n\n"
-        f"📍 Progression : <b>{status['progress_pct']}%</b>\n"
-        f"📏 Distance restante : <b>{status['dist_remaining_nm']} NM</b>\n"
+        f"📍 {status['lat']:.3f}°N {abs(status['lon']):.3f}°{'O' if status['lon'] < 0 else 'E'} "
+        f"(il y a {status['age_min']} min)\n\n"
+        f"📊 Progression : <b>{status['progress_pct']}%</b>\n"
+        f"📏 Restant : <b>{status['dist_remaining_nm']} NM</b>\n"
         f"⏱ ETA : <b>{status['eta'] or '—'}</b>\n"
         f"🚤 Vitesse moy. 6h : <b>{status['avg_speed_knots']} kts</b>\n\n"
-        f"<b>🌊 Conditions actuelles :</b>\n"
-        f"  💨 Vent : {wind_str}\n"
-        f"  🌊 Vagues : {wave_str}\n"
-        f"  🌊 Houle : {swell_str}\n\n"
-        f"<a href='{SERVER_URL}/passage'>📊 Voir le Passage Planner</a>"
+        f"<b>🌊 Conditions maintenant :</b>\n"
+        f"  💨 {wind_str}\n"
+        f"  🌊 Vagues {wave_str} · Houle {swell_str}\n\n"
+        f"<b>📅 Prévisions 3 jours :</b>\n"
+        f"{forecast_txt}\n\n"
+        f"<a href='{SERVER_URL}/passage'>📊 Passage Planner</a>"
     )
 
 
@@ -240,6 +243,59 @@ def build_pre_departure_message(departure, wx):
     )
 
 
+
+def get_3day_forecast(lat, lon):
+    """Prévisions 3 jours depuis Open-Meteo depuis la position InReach."""
+    try:
+        url = "https://api.open-meteo.com/v1/forecast"
+        params = {
+            "latitude": round(lat, 3),
+            "longitude": round(lon, 3),
+            "daily": "wind_speed_10m_max,wind_gusts_10m_max,wind_direction_10m_dominant,wave_height_max,precipitation_sum",
+            "wind_speed_unit": "kn",
+            "timezone": "UTC",
+            "forecast_days": 3,
+        }
+        resp = requests.get(url, params=params, timeout=15)
+        resp.raise_for_status()
+        data = resp.json()
+        daily = data.get("daily", {})
+        days = []
+        dates     = daily.get("time", [])
+        winds     = daily.get("wind_speed_10m_max", [])
+        gusts     = daily.get("wind_gusts_10m_max", [])
+        dirs      = daily.get("wind_direction_10m_dominant", [])
+        waves     = daily.get("wave_height_max", [])
+        precip    = daily.get("precipitation_sum", [])
+        for i in range(min(3, len(dates))):
+            dt = datetime.fromisoformat(dates[i])
+            days.append({
+                "label": dt.strftime("%a %d/%m"),
+                "wind_kts": round(winds[i]) if i < len(winds) and winds[i] else None,
+                "gusts_kts": round(gusts[i]) if i < len(gusts) and gusts[i] else None,
+                "dir": wind_dir_to_cardinal(dirs[i] if i < len(dirs) else None),
+                "wave_m": round(waves[i], 1) if i < len(waves) and waves[i] else None,
+                "precip_mm": round(precip[i], 1) if i < len(precip) and precip[i] else 0,
+            })
+        return days
+    except Exception as e:
+        logger.warning("Erreur prévisions 3j : %s", e)
+        return []
+
+
+def format_3day_forecast(days):
+    if not days:
+        return "  Prévisions indisponibles"
+    lines = []
+    for d in days:
+        wind = f"{d['wind_kts']} kts {d['dir']}" if d['wind_kts'] else "?"
+        gusts = f"(rafales {d['gusts_kts']})" if d['gusts_kts'] else ""
+        wave = f"vagues {d['wave_m']}m" if d['wave_m'] else ""
+        parts = [p for p in [wind, gusts, wave] if p]
+        lines.append(f"  <b>{d['label']}</b> : {' '.join(parts)}")
+    return "\n".join(lines)
+
+
 def main():
     logger.info("=== Résumé Telegram quotidien ===")
 
@@ -251,7 +307,8 @@ def main():
 
     if at_sea:
         logger.info("Mode EN MER détecté — route %s, %d%% fait", at_sea["route_name"], at_sea["progress_pct"])
-        msg = build_at_sea_message(at_sea, wx)
+        forecast_days = get_3day_forecast(at_sea["lat"], at_sea["lon"])
+        msg = build_at_sea_message(at_sea, wx, forecast_days)
     else:
         departure = get_departure_summary(conn)
         logger.info("Mode PRÉ-DÉPART — meilleure fenêtre : %s", departure["departure_date"] if departure else "aucune")
