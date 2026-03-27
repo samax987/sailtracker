@@ -80,11 +80,17 @@ class GribWindProvider:
         self._load_all()
 
     def _load_all(self):
-        """Charge tous les fichiers wind_*.json disponibles."""
+        """Charge les fichiers wind_*.json récents (30 derniers jours max)."""
         files = sorted(self.cache_dir.glob("wind_*.json"))
         if not files:
             logger.warning("GribWindProvider: aucun fichier GRIB trouvé dans %s", self.cache_dir)
             return
+
+        # Limiter aux fichiers dont la date de validité est dans les 30 prochains jours
+        # pour éviter de charger des centaines de fichiers historiques en mémoire
+        cutoff_past = datetime.now(timezone.utc) - timedelta(days=1)
+        cutoff_future = datetime.now(timezone.utc) + timedelta(days=30)
+        skipped = 0
 
         for f in files:
             try:
@@ -102,6 +108,11 @@ class GribWindProvider:
                 )
                 valid_dt = ref_dt + timedelta(hours=fcast_h)
 
+                # Sauter les fichiers hors fenêtre
+                if valid_dt < cutoff_past or valid_dt > cutoff_future:
+                    skipped += 1
+                    continue
+
                 with open(f, encoding='utf-8') as jf:
                     data = json.load(jf)
 
@@ -112,7 +123,7 @@ class GribWindProvider:
 
         self._timeline.sort(key=lambda x: x[0])
         self._times = [t for t, _ in self._timeline]
-        logger.info("GribWindProvider: %d fichiers GRIB chargés", len(self._timeline))
+        logger.info("GribWindProvider: %d fichiers GRIB chargés (%d ignorés hors fenêtre)", len(self._timeline), skipped)
 
     def _parse_grid(self, data: list, key: str) -> dict:
         """Parse le JSON format leaflet-velocity (2 composantes U et V)."""
