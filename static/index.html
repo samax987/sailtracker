@@ -256,9 +256,9 @@
     ===================================================================== */
     /* Icône voilier emoji */
     .boat-icon-root {
-      width: 40px; height: 40px;
+      width: 56px; height: 56px;
       position: relative;
-      display: flex; align-items: center; justify-content: center;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
     }
     .boat-emoji-wrap {
       display: flex; align-items: center; justify-content: center;
@@ -270,12 +270,16 @@
       display: inline-block;
       transform-origin: center;
       filter: drop-shadow(0 0 5px rgba(59, 130, 246, 0.9));
-      animation: boatSway 3s ease-in-out infinite;
     }
-    @keyframes boatSway {
-      0%   { transform: rotate(-3deg); }
-      50%  { transform: rotate(3deg);  }
-      100% { transform: rotate(-3deg); }
+    .boat-label {
+      font-size: 9px;
+      font-weight: 700;
+      color: #fff;
+      text-shadow: 0 0 4px #000, 0 0 4px #000;
+      letter-spacing: 0.05em;
+      white-space: nowrap;
+      margin-top: -2px;
+      pointer-events: none;
     }
     .anchor-pulse-ring {
       position: absolute;
@@ -472,7 +476,7 @@
 <div class="panel" id="panel-boat">
   <div class="panel-title">
     <span id="conn-dot"></span>
-    <span id="boat-name">Mon Voilier</span>
+    <span id="boat-name">POLLEN</span>
   </div>
   <div class="stat-row">
     <span class="stat-label">Vitesse</span>
@@ -721,20 +725,20 @@ function initMap() {
 // Icône voilier SVG orientée selon le cap
 // =============================================================================
 function createBoatIcon(course, speed) {
-  const r = course || 0;
   const moving = speed != null && speed > 0.5;
   const pulseClass = 'anchor-pulse-ring' + (moving ? '' : ' active');
   const html = `<div class="boat-icon-root">
     <div class="${pulseClass}"></div>
-    <div class="boat-emoji-wrap" style="transform:rotate(${r}deg)">
+    <div class="boat-emoji-wrap">
       <span class="boat-emoji">&#x26F5;</span>
     </div>
+    <div class="boat-label">POLLEN</div>
   </div>`;
   return L.divIcon({
     html,
-    iconSize: [40, 40],
-    iconAnchor: [20, 20],
-    popupAnchor: [0, -22],
+    iconSize: [56, 56],
+    iconAnchor: [28, 28],
+    popupAnchor: [0, -28],
     className: 'boat-marker-icon',
   });
 }
@@ -744,12 +748,7 @@ function updateBoatVisuals(course, speed) {
   if (!boatMarker) return;
   const el = boatMarker.getElement();
   if (!el) return;
-  const r = course || 0;
   const moving = speed != null && speed > 0.5;
-
-  const wrap = el.querySelector('.boat-emoji-wrap');
-  if (wrap) wrap.style.transform = `rotate(${r}deg)`;
-
   const pulse = el.querySelector('.anchor-pulse-ring');
   if (pulse) pulse.classList.toggle('active', !moving);
 }
@@ -791,7 +790,7 @@ async function fetchPosition() {
 function buildBoatPopup(pos) {
   const ago = pos.timestamp ? timeAgo(pos.timestamp) : '?';
   return `
-    <div class="popup-name">⛵ ${document.getElementById('boat-name').textContent}</div>
+    <div class="popup-name">⛵ POLLEN</div>
     <div>🕐 ${ago}</div>
     <div>🚀 <strong>${fmt(pos.speed_knots, 1)} nœuds</strong></div>
     <div>🧭 Cap : <strong>${fmt(pos.course, 0)}°</strong></div>
