@@ -411,7 +411,10 @@ def api_create_route():
 
 @app.route("/api/gpx/parse", methods=["POST"])
 def api_gpx_parse():
-    import xml.etree.ElementTree as ET
+    try:
+        import defusedxml.ElementTree as ET
+    except ImportError:
+        import xml.etree.ElementTree as ET
     import zipfile, io
     if "file" not in request.files:
         return jsonify({"error": "Fichier requis (GPX, KML ou KMZ)"}), 400
@@ -495,6 +498,8 @@ def api_gpx_parse():
         waypoints = []
         if filename.endswith(".kmz"):
             raw_bytes = f.read()
+            if len(raw_bytes) > 10 * 1024 * 1024:  # 10 MB max
+                return jsonify({"error": "Fichier trop volumineux (max 10 MB)"}), 413
             with zipfile.ZipFile(io.BytesIO(raw_bytes)) as zf:
                 kml_names = [n for n in zf.namelist() if n.lower().endswith(".kml")]
                 if not kml_names:
@@ -685,13 +690,13 @@ def api_passage_departures(route_id):
         alerts = []
         if r["alerts"]:
             try: alerts = json.loads(r["alerts"])
-            except: alerts = [r["alerts"]]
+            except (json.JSONDecodeError, TypeError): alerts = [r["alerts"]] if r["alerts"] else []
         overall = r["overall_score"] or 0
         verdict = "GO" if overall >= 70 else ("ATTENTION" if overall >= 45 else "NO-GO")
         summary_data = {}
         if r["summary"]:
             try: summary_data = json.loads(r["summary"])
-            except: pass
+            except (json.JSONDecodeError, TypeError): pass
         simulations.append({
             "departure_date": r["departure_date"],
             "confidence_score": r["confidence_score"],
@@ -1486,11 +1491,11 @@ def build_passage_summary():
             alerts = []
             if r["alerts"]:
                 try: alerts = json.loads(r["alerts"])[:2]
-                except: pass
+                except (json.JSONDecodeError, TypeError): pass
             summary_d = {}
             if r["summary"]:
                 try: summary_d = json.loads(r["summary"])
-                except: pass
+                except (json.JSONDecodeError, TypeError): pass
             label = "GO" if overall >= 70 else ("MOYEN" if overall >= 50 else "MAUVAIS")
             dep = {
                 "date": r["departure_date"][:10],
@@ -1939,6 +1944,7 @@ def api_tracker_reset():
     if not admin_token:
         return jsonify({'success': False, 'error': 'SAILTRACKER_ADMIN_TOKEN non configuré côté serveur'}), 500
     if not _secrets.compare_digest(admin_token, provided_token):
+        logger.warning("Tentative token admin invalide depuis %s", request.remote_addr)
         return jsonify({'success': False, 'error': 'Token invalide'}), 403
     conn = _get_db_conn()
     count_row = conn.execute("SELECT COUNT(*) as n FROM positions").fetchone()
