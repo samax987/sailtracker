@@ -37,6 +37,36 @@
     .dep-card .card-alerts { font-size:0.68rem; color:var(--text-dim); }
     .dep-card.best { border-color:var(--green); }
     .dep-card.best .card-date::before { content:⭐ ; }
+    /* Phase badges */
+    .phase-badge { padding:3px 10px; border-radius:20px; font-size:0.7rem; font-weight:700; text-transform:uppercase; letter-spacing:.06em; }
+    .phase-badge.planning { background:rgba(96,165,250,0.15); color:#60a5fa; border:1px solid rgba(96,165,250,0.3); }
+    .phase-badge.active { background:rgba(74,222,128,0.15); color:#4ade80; border:1px solid rgba(74,222,128,0.3); animation:pulse-green 2s infinite; }
+    .phase-badge.completed { background:rgba(251,191,36,0.15); color:#fbbf24; border:1px solid rgba(251,191,36,0.3); }
+    @keyframes pulse-green { 0%,100%{opacity:1} 50%{opacity:.65} }
+    /* Panel météo active */
+    #active-weather-panel { display:none; background:#0d1a2e; border-bottom:1px solid #2d4a7a; padding:12px 16px; }
+    .aw-title { font-size:0.78rem; font-weight:700; color:#4ade80; margin-bottom:10px; }
+    .aw-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:10px; }
+    .aw-card { background:#161b22; border:1px solid #2d4a7a; border-radius:8px; padding:10px 12px; }
+    .aw-card-name { font-size:0.72rem; font-weight:700; color:#7dd3fc; margin-bottom:6px; }
+    .aw-card-dist { font-size:0.65rem; color:#94a3b8; margin-bottom:8px; }
+    .aw-row { display:flex; gap:16px; flex-wrap:wrap; font-size:0.78rem; }
+    .aw-stat { display:flex; flex-direction:column; gap:1px; }
+    .aw-stat .lbl { font-size:0.62rem; color:#94a3b8; text-transform:uppercase; }
+    .aw-stat .val { font-weight:600; color:#e2e8f0; }
+    .aw-forecast-scroll { display:flex; gap:8px; overflow-x:auto; margin-top:8px; padding-bottom:4px; }
+    .aw-fc-slot { min-width:70px; background:#0a1628; border-radius:6px; padding:6px 8px; font-size:0.67rem; text-align:center; flex-shrink:0; }
+    .aw-fc-slot .fc-time { color:#94a3b8; margin-bottom:4px; }
+    .aw-fc-slot .fc-wind { font-weight:700; color:#7dd3fc; font-size:0.82rem; }
+    .aw-fc-slot .fc-wave { color:#60a5fa; margin-top:2px; }
+    /* Panel bilan traversée */
+    #completed-panel { display:none; background:#0d1a2e; border-bottom:2px solid #fbbf24; padding:14px 16px; }
+    .cp-title { font-size:0.85rem; font-weight:700; color:#fbbf24; margin-bottom:10px; }
+    .cp-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); gap:10px; }
+    .cp-stat { background:#161b22; border:1px solid #2d4a7a; border-radius:8px; padding:10px 12px; }
+    .cp-stat .lbl { font-size:0.62rem; color:#94a3b8; text-transform:uppercase; margin-bottom:4px; }
+    .cp-stat .val { font-size:1.2rem; font-weight:700; color:#e2e8f0; }
+    .cp-stat .sub { font-size:0.65rem; color:#94a3b8; margin-top:2px; }
     html,body { height:100%; font-family:var(--font); background:var(--bg); color:var(--text); overflow-x:hidden; }
 
     /* ── Header ── */
@@ -262,6 +292,7 @@
     <input type="file" id="gpx-file-input" accept=".gpx" style="display:none" />
     <button class="btn" id="btn-edit-route" title="Modifier les waypoints de la route">&#x270F;&#xFE0F;</button>
     <button class="btn" id="btn-rename-route" title="Renommer la route" style="padding:4px 9px;font-size:0.78rem">&#x1F3F7; Renommer</button>
+    <span id="phase-badge" class="phase-badge planning" style="display:none">Planning</span>
   </div>
 
   <div class="header-info">
@@ -278,6 +309,8 @@
     <div id="refresh-indicator"><div class="spinner" style="width:14px;height:14px;border-width:2px"></div>Actualisation&hellip;</div>
     <button class="btn" id="btn-refresh">&#x21BB; Actualiser</button>
     <button class="btn" id="btn-wind-arrows" style="padding:4px 10px;font-size:0.75rem" title="Afficher/masquer les flèches vent GRIB">&#x1F4A8; Vent</button>
+    <button class="btn" id="btn-start-passage" style="display:none;padding:4px 10px;font-size:0.75rem;background:rgba(74,222,128,0.12);border-color:rgba(74,222,128,0.35);color:#4ade80" title="Démarrer la traversée">&#x2693; Partir</button>
+    <button class="btn" id="btn-arrive" style="display:none;padding:4px 10px;font-size:0.75rem;background:rgba(251,191,36,0.12);border-color:rgba(251,191,36,0.35);color:#fbbf24" title="Enregistrer l'arrivée">&#x1F3C1; Arrivée</button>
     <button class="btn danger" id="btn-delete-route" style="padding:4px 10px;font-size:0.75rem" title="Supprimer la route sélectionnée">&#x1F5D1; Supprimer</button>
     <button class="btn" id="btn-optimize" style="padding:4px 10px;font-size:0.75rem;background:rgba(74,222,128,0.12);border-color:rgba(74,222,128,0.35);color:#4ade80" title="Routage isochrones — calcule la route optimale selon le vent prévu et les polaires">&#x26A1; Optimiser</button>
     <a href="/" class="btn">&#x2190; Carte</a>
@@ -329,6 +362,19 @@
   <div id="status-icon"></div>
   <span id="status-text"></span>
   <span id="status-elapsed" style="color:var(--text-dim);font-size:0.72rem;margin-left:4px"></span>
+</div>
+
+<!-- ── Panel météo traversée active ── -->
+<div id="active-weather-panel">
+  <div class="aw-title">&#x26F5; En mer — Météo aux prochains waypoints</div>
+  <div class="aw-grid" id="aw-grid"></div>
+  <div style="margin-top:8px;font-size:0.65rem;color:#94a3b8" id="aw-updated"></div>
+</div>
+
+<!-- ── Panel bilan traversée complétée ── -->
+<div id="completed-panel">
+  <div class="cp-title">&#x1F3C1; Traversée terminée</div>
+  <div class="cp-grid" id="cp-grid"></div>
 </div>
 
 <!-- ── Éditeur de route ── -->
@@ -923,7 +969,8 @@ async function populateRouteDropdown(selectedId) {
   data.routes.forEach(r => {
     const opt = document.createElement('option');
     opt.value = r.id;
-    opt.textContent = r.name + (r.status === 'computing' ? ' ⏳' : '');
+    const phaseIcon = r.phase === 'active' ? ' ⚡' : r.phase === 'completed' ? ' ✓' : '';
+    opt.textContent = r.name + (r.status === 'computing' ? ' ⏳' : phaseIcon);
     if (r.id === (selectedId || routeId)) opt.selected = true;
     select.appendChild(opt);
   });
@@ -1243,6 +1290,11 @@ async function switchRoute(id) {
     const s = await statusResp.json();
     if (s.status === 'computing') { showStatusBar('computing'); startStatusPolling(id); }
   }
+  // Afficher la phase
+  const phase = routeInfo?.phase || 'planning';
+  updatePhaseUI(phase);
+  if (phase === 'active') loadActiveWeather();
+  else if (phase === 'completed') loadCompletedSummary();
 }
 
 function updateHeader() {
@@ -1817,6 +1869,12 @@ async function bootstrap() {
       if (s.status === 'computing') { showStatusBar('computing'); startStatusPolling(routeId); }
     }
 
+    // Afficher la phase de la route chargée
+    const initPhase = routeInfo?.phase || 'planning';
+    updatePhaseUI(initPhase);
+    if (initPhase === 'active') loadActiveWeather();
+    else if (initPhase === 'completed') loadCompletedSummary();
+
     } // end else (routes non vides)
 
   } catch(e) {
@@ -1903,6 +1961,9 @@ async function bootstrap() {
     const newId = parseInt(e.target.value);
     if (newId && newId !== routeId) await switchRoute(newId);
   });
+
+  document.getElementById('btn-start-passage')?.addEventListener('click', startPassage);
+  document.getElementById('btn-arrive')?.addEventListener('click', arrivePassage);
 
   document.getElementById('btn-refresh').addEventListener('click', refreshData);
 
@@ -2212,6 +2273,163 @@ function clearOptimize() {
   optimalRouteMarkers.forEach(m => map.removeLayer(m));
   optimalRouteMarkers = [];
   document.getElementById('optimize-result-panel').style.display = 'none';
+}
+
+// =============================================================================
+// Gestion des phases : Planning / Active / Completed
+// =============================================================================
+
+function updatePhaseUI(phase) {
+  const badge = document.getElementById('phase-badge');
+  const btnStart = document.getElementById('btn-start-passage');
+  const btnArrive = document.getElementById('btn-arrive');
+  const awPanel = document.getElementById('active-weather-panel');
+  const cpPanel = document.getElementById('completed-panel');
+  if (!badge) return;
+
+  const labels = { planning: 'Planning', active: '⚡ En mer', completed: '✓ Terminée' };
+  badge.textContent = labels[phase] || phase;
+  badge.className = 'phase-badge ' + (phase || 'planning');
+  badge.style.display = '';
+
+  btnStart.style.display = (phase === 'planning') ? '' : 'none';
+  btnArrive.style.display = (phase === 'active') ? '' : 'none';
+  awPanel.style.display = (phase === 'active') ? '' : 'none';
+  cpPanel.style.display = (phase === 'completed') ? '' : 'none';
+}
+
+async function startPassage() {
+  if (!routeId) return;
+  const now = new Date().toISOString().slice(0, 16);
+  const input = prompt('Date/heure de départ UTC (YYYY-MM-DD HH:MM) :', now.replace('T', ' '));
+  if (input === null) return;
+  const departure = input.trim().replace(' ', 'T') || now;
+  try {
+    const resp = await fetch(`/api/passage/${routeId}/start`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ actual_departure: departure }),
+    });
+    const data = await resp.json();
+    if (resp.ok) {
+      if (routeInfo) routeInfo.phase = 'active';
+      updatePhaseUI('active');
+      await loadActiveWeather();
+    } else {
+      alert('Erreur : ' + (data.error || 'Inconnue'));
+    }
+  } catch(e) { alert('Erreur réseau : ' + e.message); }
+}
+
+async function arrivePassage() {
+  if (!routeId) return;
+  const now = new Date().toISOString().slice(0, 16);
+  const input = prompt('Date/heure d\'arrivée UTC (YYYY-MM-DD HH:MM) :', now.replace('T', ' '));
+  if (input === null) return;
+  const arrival = input.trim().replace(' ', 'T') || now;
+  const notes = prompt('Notes sur la traversée (optionnel) :', '') || '';
+  try {
+    const resp = await fetch(`/api/passage/${routeId}/arrive`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ actual_arrival: arrival, notes }),
+    });
+    const data = await resp.json();
+    if (resp.ok) {
+      if (routeInfo) routeInfo.phase = 'completed';
+      updatePhaseUI('completed');
+      await loadCompletedSummary();
+    } else {
+      alert('Erreur : ' + (data.error || 'Inconnue'));
+    }
+  } catch(e) { alert('Erreur réseau : ' + e.message); }
+}
+
+function escHtml(s) {
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function windDirLabel(deg) {
+  if (deg == null) return '—';
+  const dirs = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSO','SO','OSO','O','ONO','NO','NNO'];
+  return dirs[Math.round(deg / 22.5) % 16];
+}
+
+async function loadActiveWeather() {
+  if (!routeId) return;
+  const grid = document.getElementById('aw-grid');
+  const updEl = document.getElementById('aw-updated');
+  if (!grid) return;
+  grid.innerHTML = '<div style="color:#94a3b8;font-size:0.78rem">Chargement météo…</div>';
+  try {
+    const resp = await fetch(`/api/passage/${routeId}/active-weather`);
+    const data = await resp.json();
+    if (!data.next_waypoints || data.next_waypoints.length === 0) {
+      grid.innerHTML = '<div style="color:#94a3b8;font-size:0.78rem">Pas de données météo disponibles. Lancez un calcul.</div>';
+      return;
+    }
+    grid.innerHTML = data.next_waypoints.map(wpData => {
+      const wp = wpData.waypoint;
+      const fcs = wpData.forecasts || [];
+      // Météo courante = premier forecast
+      const cur = fcs[0] || {};
+      const windColor = cur.wind_knots == null ? '#94a3b8' :
+        cur.wind_knots < 10 ? '#4ade80' : cur.wind_knots < 20 ? '#7dd3fc' :
+        cur.wind_knots < 30 ? '#fbbf24' : '#f87171';
+      const slots = fcs.slice(0, 8).map(f => {
+        const t = f.time ? f.time.slice(5, 13).replace('T', ' ') : '';
+        const wc = f.wind_knots == null ? '#94a3b8' :
+          f.wind_knots < 10 ? '#4ade80' : f.wind_knots < 20 ? '#7dd3fc' :
+          f.wind_knots < 30 ? '#fbbf24' : '#f87171';
+        return `<div class="aw-fc-slot">
+          <div class="fc-time">${t}</div>
+          <div class="fc-wind" style="color:${wc}">${f.wind_knots != null ? Math.round(f.wind_knots) : '—'} kts</div>
+          <div style="font-size:0.62rem;color:#94a3b8">${windDirLabel(f.wind_dir)}</div>
+          <div class="fc-wave">${f.wave_m != null ? f.wave_m.toFixed(1) + 'm' : '—'}</div>
+        </div>`;
+      }).join('');
+      return `<div class="aw-card">
+        <div class="aw-card-name">${wp.name}</div>
+        <div class="aw-card-dist">à ${wp.distance_nm} NM</div>
+        <div class="aw-row">
+          <div class="aw-stat"><span class="lbl">Vent</span><span class="val" style="color:${windColor}">${cur.wind_knots != null ? Math.round(cur.wind_knots) + ' kts' : '—'}</span></div>
+          <div class="aw-stat"><span class="lbl">Dir.</span><span class="val">${windDirLabel(cur.wind_dir)}</span></div>
+          <div class="aw-stat"><span class="lbl">Rafales</span><span class="val">${cur.gusts_knots != null ? Math.round(cur.gusts_knots) + ' kts' : '—'}</span></div>
+          <div class="aw-stat"><span class="lbl">Vagues</span><span class="val">${cur.wave_m != null ? cur.wave_m.toFixed(1) + ' m' : '—'}</span></div>
+          ${cur.swell_m != null ? `<div class="aw-stat"><span class="lbl">Houle</span><span class="val">${cur.swell_m.toFixed(1)} m</span></div>` : ''}
+        </div>
+        <div class="aw-forecast-scroll">${slots}</div>
+      </div>`;
+    }).join('');
+    if (data.collected_at) updEl.textContent = 'Données météo du ' + data.collected_at.slice(0, 16).replace('T', ' ') + ' UTC';
+  } catch(e) {
+    grid.innerHTML = '<div style="color:#f87171;font-size:0.78rem">Erreur : ' + e.message + '</div>';
+  }
+}
+
+async function loadCompletedSummary() {
+  if (!routeId) return;
+  const grid = document.getElementById('cp-grid');
+  if (!grid) return;
+  try {
+    const resp = await fetch(`/api/passage/${routeId}/completed-summary`);
+    const d = await resp.json();
+    if (d.error) { grid.innerHTML = '<div style="color:#f87171">' + escHtml(d.error) + '</div>'; return; }
+    const dep = d.actual_departure ? d.actual_departure.slice(0, 16).replace('T', ' ') : '—';
+    const arr = d.actual_arrival ? d.actual_arrival.slice(0, 16).replace('T', ' ') : '—';
+    const dur = d.duration_days ? d.duration_days + 'j (' + d.duration_hours + 'h)' : '—';
+    const spd = d.avg_speed_knots ? d.avg_speed_knots + ' kts moy.' : '—';
+    grid.innerHTML = `
+      <div class="cp-stat"><div class="lbl">Départ</div><div class="val" style="font-size:0.9rem">${escHtml(d.departure_port || dep)}</div><div class="sub">${escHtml(dep)} UTC</div></div>
+      <div class="cp-stat"><div class="lbl">Arrivée</div><div class="val" style="font-size:0.9rem">${escHtml(d.arrival_port || arr)}</div><div class="sub">${escHtml(arr)} UTC</div></div>
+      <div class="cp-stat"><div class="lbl">Distance</div><div class="val">${escHtml(String(d.total_distance_nm))} <span style="font-size:0.7rem;color:#94a3b8">NM</span></div></div>
+      <div class="cp-stat"><div class="lbl">Durée réelle</div><div class="val" style="font-size:0.9rem">${escHtml(dur)}</div></div>
+      <div class="cp-stat"><div class="lbl">Vitesse moy.</div><div class="val">${escHtml(spd)}</div></div>
+      ${d.notes ? `<div class="cp-stat" style="grid-column:1/-1"><div class="lbl">Notes</div><div style="font-size:0.8rem;color:#e2e8f0;margin-top:4px">${escHtml(d.notes)}</div></div>` : ''}
+    `;
+  } catch(e) {
+    grid.innerHTML = '<div style="color:#f87171">Erreur : ' + escHtml(e.message) + '</div>';
+  }
 }
 </script>
 </body>

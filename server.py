@@ -312,7 +312,7 @@ def api_weather_forecast():
 def api_routes_list():
     conn = get_db()
     rows = conn.execute(
-        "SELECT id,name,boat_speed_avg_knots,max_wind_knots,max_wave_m,max_swell_m,created_at,status,last_computed FROM passage_routes ORDER BY id"
+        "SELECT id,name,boat_speed_avg_knots,max_wind_knots,max_wave_m,max_swell_m,created_at,status,last_computed,phase,actual_departure,actual_arrival,departure_port,arrival_port FROM passage_routes ORDER BY id"
     ).fetchall()
     conn.close()
     return jsonify({"routes": [{
@@ -323,6 +323,11 @@ def api_routes_list():
         "created_at": r["created_at"],
         "status": r["status"] or "ready",
         "last_computed": r["last_computed"],
+        "phase": r["phase"] or "planning",
+        "actual_departure": r["actual_departure"],
+        "actual_arrival": r["actual_arrival"],
+        "departure_port": r["departure_port"],
+        "arrival_port": r["arrival_port"],
     } for r in rows]})
 
 
@@ -577,6 +582,11 @@ def api_passage_info(route_id):
         "created_at": row["created_at"],
         "status": row["status"] or "ready",
         "last_computed": row["last_computed"],
+        "phase": row["phase"] or "planning",
+        "actual_departure": row["actual_departure"],
+        "actual_arrival": row["actual_arrival"],
+        "departure_port": row["departure_port"],
+        "arrival_port": row["arrival_port"],
     })
 
 
@@ -811,6 +821,209 @@ def api_passage_ensemble(route_id):
         "reliability": reliability,
         "reliability_level": reliability_level,
     })
+
+
+# =============================================================================
+# API : Gestion des phases de traversée (planning / active / completed)
+# =============================================================================
+
+_DATETIME_RE = re.compile(r'^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}')
+
+def _parse_user_datetime(s):
+    """Valide et parse une chaîne datetime saisie par l'utilisateur."""
+    if not s or not _DATETIME_RE.match(s):
+        raise ValueError(f"Format invalide: {s!r}")
+    return datetime.fromisoformat(s.replace(' ', 'T'))
+
+
+@app.route("/api/passage/<int:route_id>/start", methods=["POST"])
+def api_passage_start(route_id):
+    """Démarre une traversée : phase planning → active."""
+    data = request.get_json() or {}
+    conn = get_db()
+    try:
+        row = conn.execute("SELECT id, phase FROM passage_routes WHERE id=?", (route_id,)).fetchone()
+        if not row:
+            return jsonify({"error": "Route non trouvée"}), 404
+        if row["phase"] != "planning":
+            return jsonify({"error": f"La route est déjà en phase '{row['phase']}'"}), 409
+        raw = data.get("actual_departure", "")
+        try:
+            departure_time = _parse_user_datetime(raw).strftime("%Y-%m-%d %H:%M:%S") if raw else datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            return jsonify({"error": "Format de date invalide (attendu: YYYY-MM-DD HH:MM)"}), 400
+        conn.execute(
+            "UPDATE passage_routes SET phase='active', actual_departure=? WHERE id=?",
+            (departure_time, route_id)
+        )
+        conn.commit()
+        return jsonify({"status": "active", "actual_departure": departure_time})
+    finally:
+        conn.close()
+
+
+@app.route("/api/passage/<int:route_id>/arrive", methods=["POST"])
+def api_passage_arrive(route_id):
+    """Enregistre l'arrivée : phase active → completed."""
+    data = request.get_json() or {}
+    conn = get_db()
+    try:
+        row = conn.execute("SELECT id, phase, actual_departure FROM passage_routes WHERE id=?", (route_id,)).fetchone()
+        if not row:
+            return jsonify({"error": "Route non trouvée"}), 404
+        if row["phase"] != "active":
+            return jsonify({"error": f"La traversée n'est pas active (phase: '{row['phase']}')"}), 409
+        raw = data.get("actual_arrival", "")
+        try:
+            arrival_time = _parse_user_datetime(raw).strftime("%Y-%m-%d %H:%M:%S") if raw else datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            return jsonify({"error": "Format de date invalide (attendu: YYYY-MM-DD HH:MM)"}), 400
+        notes = data.get("notes", "")[:2000]
+
+        # Vérifier que l'arrivée est postérieure au départ
+        duration_h = None
+        if row["actual_departure"]:
+            try:
+                dep = _parse_user_datetime(row["actual_departure"])
+                arr = _parse_user_datetime(arrival_time)
+                if arr <= dep:
+                    return jsonify({"error": "La date d'arrivée doit être postérieure au départ"}), 400
+                duration_h = round((arr - dep).total_seconds() / 3600, 1)
+            except ValueError:
+                pass
+
+        conn.execute(
+            "UPDATE passage_routes SET phase='completed', actual_arrival=?, notes=? WHERE id=?",
+            (arrival_time, notes, route_id)
+        )
+        conn.commit()
+        return jsonify({"status": "completed", "actual_arrival": arrival_time, "duration_hours": duration_h})
+    finally:
+        conn.close()
+
+
+@app.route("/api/passage/<int:route_id>/active-weather")
+def api_passage_active_weather(route_id):
+    """Météo aux prochains waypoints pour une traversée active."""
+    conn = get_db()
+    try:
+        route_row = conn.execute("SELECT * FROM passage_routes WHERE id=?", (route_id,)).fetchone()
+        if not route_row:
+            return jsonify({"error": "Route non trouvée"}), 404
+
+        waypoints = json.loads(route_row["waypoints"])
+
+        # Position actuelle du bateau
+        pos_row = conn.execute(
+            "SELECT latitude, longitude, timestamp FROM positions ORDER BY timestamp DESC LIMIT 1"
+        ).fetchone()
+        boat_lat = pos_row["latitude"] if pos_row else waypoints[0]["lat"]
+        boat_lon = pos_row["longitude"] if pos_row else waypoints[0]["lon"]
+        boat_ts = pos_row["timestamp"] if pos_row else None
+
+        nearest_idx = min(range(len(waypoints)),
+                          key=lambda i: haversine_nm(boat_lat, boat_lon,
+                                                     waypoints[i]["lat"], waypoints[i]["lon"]))
+
+        next_start = max(0, nearest_idx)
+        next_wps_idx = list(range(next_start, min(len(waypoints), next_start + 5)))
+
+        last_collected = conn.execute(
+            "SELECT MAX(collected_at) as last FROM passage_forecasts WHERE route_id=?", (route_id,)
+        ).fetchone()
+
+        weather_by_wp = {}
+        if last_collected and last_collected["last"]:
+            collected_at = last_collected["last"]
+            now_str = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M")
+
+            for wp_idx in next_wps_idx:
+                rows = conn.execute(
+                    """SELECT forecast_time, wind_speed_knots, wind_direction_deg, wind_gusts_knots,
+                              wave_height_m, swell_height_m, swell_period_s, current_speed_knots
+                       FROM passage_forecasts
+                       WHERE route_id=? AND collected_at=? AND waypoint_index=?
+                         AND forecast_time >= ?
+                       ORDER BY forecast_time ASC LIMIT 16""",
+                    (route_id, collected_at, wp_idx, now_str)
+                ).fetchall()
+
+                if rows:
+                    wp = waypoints[wp_idx]
+                    dist_nm = haversine_nm(boat_lat, boat_lon, wp["lat"], wp["lon"])
+                    weather_by_wp[wp_idx] = {
+                        "waypoint": {
+                            "index": wp_idx,
+                            "name": wp.get("name", f"WP{wp_idx+1}"),
+                            "lat": wp["lat"],
+                            "lon": wp["lon"],
+                            "distance_nm": round(dist_nm, 0),
+                        },
+                        "forecasts": [{
+                            "time": r["forecast_time"],
+                            "wind_knots": r["wind_speed_knots"],
+                            "wind_dir": r["wind_direction_deg"],
+                            "gusts_knots": r["wind_gusts_knots"],
+                            "wave_m": r["wave_height_m"],
+                            "swell_m": r["swell_height_m"],
+                            "current_kn": r["current_speed_knots"],
+                        } for r in rows],
+                    }
+
+        return jsonify({
+            "route_id": route_id,
+            "boat_position": {"lat": boat_lat, "lon": boat_lon, "timestamp": boat_ts},
+            "nearest_waypoint_index": nearest_idx,
+            "next_waypoints": [weather_by_wp[i] for i in next_wps_idx if i in weather_by_wp],
+            "collected_at": last_collected["last"] if last_collected else None,
+        })
+    finally:
+        conn.close()
+
+
+@app.route("/api/passage/<int:route_id>/completed-summary")
+def api_passage_completed_summary(route_id):
+    """Bilan d'une traversée complétée."""
+    conn = get_db()
+    try:
+        row = conn.execute("SELECT * FROM passage_routes WHERE id=?", (route_id,)).fetchone()
+        if not row:
+            return jsonify({"error": "Route non trouvée"}), 404
+
+        waypoints = json.loads(row["waypoints"])
+        total_nm = sum(
+            haversine_nm(waypoints[i-1]["lat"], waypoints[i-1]["lon"],
+                         waypoints[i]["lat"], waypoints[i]["lon"])
+            for i in range(1, len(waypoints))
+        )
+
+        duration_h = None
+        avg_speed_kn = None
+        if row["actual_departure"] and row["actual_arrival"]:
+            try:
+                dep = datetime.fromisoformat(row["actual_departure"])
+                arr = datetime.fromisoformat(row["actual_arrival"])
+                duration_h = (arr - dep).total_seconds() / 3600
+                avg_speed_kn = round(total_nm / duration_h, 2) if duration_h > 0 else None
+            except ValueError:
+                pass
+
+        return jsonify({
+            "route_id": route_id,
+            "name": row["name"],
+            "departure_port": row["departure_port"],
+            "arrival_port": row["arrival_port"],
+            "actual_departure": row["actual_departure"],
+            "actual_arrival": row["actual_arrival"],
+            "total_distance_nm": round(total_nm, 0),
+            "duration_hours": round(duration_h, 1) if duration_h else None,
+            "duration_days": round(duration_h / 24, 1) if duration_h else None,
+            "avg_speed_knots": avg_speed_kn,
+            "notes": row["notes"],
+            "waypoints_count": len(waypoints),
+        })
+    finally:
+        conn.close()
 
 
 # =============================================================================
