@@ -709,7 +709,7 @@ async function runCalibration() {
     const d = await r.json();
     if (d.success) {
       status.textContent = `✓ ${d.new_obs} obs, ${d.updated_cells} cases calibrées`;
-      await loadAll();
+      await init();
     } else {
       status.textContent = '⚠ ' + (d.error || 'Erreur inconnue');
     }

@@ -2689,6 +2689,94 @@ def api_sail_configs_quick_change():
         conn.close()
 
 
+@app.route("/api/sail-observation", methods=["POST"])
+def api_sail_observation():
+    """
+    Enregistre une divergence entre config conseillée et config réelle.
+    Appelé silencieusement par le dashboard de quart quand la divergence dure > 5 min.
+    """
+    data = request.get_json() or {}
+    if "actual_reef" not in data or "actual_genoa" not in data:
+        return jsonify({"error": "Champs manquants"}), 400
+    conn = get_db()
+    try:
+        conn.execute(
+            """INSERT INTO sail_config_observations
+               (tws, twa, rec_reef, rec_genoa, rec_spi,
+                actual_reef, actual_genoa, actual_spi, sog)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
+            (
+                data.get("tws"), data.get("twa"),
+                data.get("rec_reef"), data.get("rec_genoa", 100), data.get("rec_spi", 0),
+                data["actual_reef"], data["actual_genoa"], data.get("actual_spi", 0),
+                data.get("sog"),
+            )
+        )
+        conn.commit()
+        return jsonify({"ok": True}), 201
+    except Exception as e:
+        logger.error("sail_observation INSERT: %s", e)
+        return jsonify({"error": str(e)}), 500
+    finally:
+        conn.close()
+
+
+@app.route("/api/sail-preferences")
+def api_sail_preferences():
+    """
+    Calcule les seuils de recommandation voiles adaptatifs depuis l'historique
+    des observations (divergences marin vs conseillé).
+    Blend linéaire : 0% observé à n=0, 70% observé à n>=10.
+    """
+    DEFAULT_BANDS = [
+        {"tws_min": 0,  "tws_max": 8,  "reef": 0, "genoa": 100},
+        {"tws_min": 8,  "tws_max": 15, "reef": 0, "genoa": 100},
+        {"tws_min": 15, "tws_max": 20, "reef": 1, "genoa": 100},
+        {"tws_min": 20, "tws_max": 25, "reef": 2, "genoa": 80},
+        {"tws_min": 25, "tws_max": 30, "reef": 3, "genoa": 50},
+        {"tws_min": 30, "tws_max": 38, "reef": 4, "genoa": 30},
+        {"tws_min": 38, "tws_max": 99, "reef": 4, "genoa": 0},
+    ]
+    conn = get_db()
+    try:
+        total = conn.execute(
+            "SELECT COUNT(*) FROM sail_config_observations"
+        ).fetchone()[0]
+        bands = []
+        for band in DEFAULT_BANDS:
+            rows = conn.execute(
+                """SELECT actual_reef, actual_genoa, COUNT(*) as n
+                   FROM sail_config_observations
+                   WHERE actual_spi = 0 AND tws >= ? AND tws < ?
+                   GROUP BY actual_reef, actual_genoa
+                   ORDER BY n DESC""",
+                (band["tws_min"], band["tws_max"])
+            ).fetchall()
+            n_total = sum(r["n"] for r in rows)
+            if n_total >= 3 and rows:
+                obs_reef  = sum(r["actual_reef"]  * r["n"] for r in rows) / n_total
+                obs_genoa = sum(r["actual_genoa"] * r["n"] for r in rows) / n_total
+                w = min(0.7, n_total / 10 * 0.7)
+                adapted_reef  = round(band["reef"]  * (1 - w) + obs_reef  * w)
+                adapted_genoa = round(band["genoa"] * (1 - w) + obs_genoa * w)
+            else:
+                adapted_reef  = band["reef"]
+                adapted_genoa = band["genoa"]
+                n_total = 0
+            bands.append({
+                **band,
+                "adapted_reef":  adapted_reef,
+                "adapted_genoa": adapted_genoa,
+                "n_obs": n_total,
+            })
+        return jsonify({"bands": bands, "total_observations": total})
+    except Exception as e:
+        logger.error("sail_preferences: %s", e)
+        return jsonify({"error": str(e)}), 500
+    finally:
+        conn.close()
+
+
 # =============================================================================
 # Dashboard de quart
 # =============================================================================
@@ -3116,6 +3204,21 @@ def init_db():
             created_at      TEXT DEFAULT (datetime('now'))
         );
         CREATE INDEX IF NOT EXISTS idx_sail_cfg ON sail_config_periods(timestamp_start);
+
+        CREATE TABLE IF NOT EXISTS sail_config_observations (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp   TEXT NOT NULL DEFAULT (datetime('now')),
+            tws         REAL,
+            twa         REAL,
+            rec_reef    INTEGER,
+            rec_genoa   INTEGER,
+            rec_spi     INTEGER DEFAULT 0,
+            actual_reef INTEGER NOT NULL,
+            actual_genoa INTEGER NOT NULL,
+            actual_spi  INTEGER DEFAULT 0,
+            sog         REAL
+        );
+        CREATE INDEX IF NOT EXISTS idx_sailobs_ts ON sail_config_observations(timestamp DESC);
     """)
     # Migrations
     for col, definition in [("status", "TEXT DEFAULT 'ready'"), ("last_computed", "TEXT"), ("source", "TEXT DEFAULT 'ais'")]:

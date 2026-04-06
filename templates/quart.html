@@ -110,20 +110,68 @@
     .fc-delta { font-size: .6rem; margin-top: 2px; }
 
     /* ── Voiles ── */
+    /* ── Voiles ── */
     .sail-current { display:flex; align-items:center; gap:10px; margin-bottom:12px; }
     .sail-badge { font-size:.85rem; font-weight:700; padding:6px 14px; border-radius:20px;
       background:rgba(45,222,130,.12); border:1px solid rgba(45,222,130,.35); color:#2dde82; }
     .sail-badge.reduced { background:rgba(251,191,36,.1); border-color:rgba(251,191,36,.35); color:#ffbb33; }
     .sail-badge.spi { background:rgba(167,139,250,.12); border-color:rgba(167,139,250,.4); color:#c4b5fd; }
     .sail-badge.none { background:var(--dim); border-color:var(--border); color:var(--muted); }
-    .sail-presets { display:grid; grid-template-columns:repeat(3,1fr); gap:7px; }
-    .sail-preset { background:var(--dim); border:1px solid var(--border); color:var(--txt);
+    .sail-badge.rec  { background:rgba(255,187,51,.12); border-color:rgba(255,187,51,.45); color:#ffbb33; }
+
+    /* Ligne conseillé */
+    .sail-rec-row { display:flex; align-items:center; gap:9px; margin-bottom:12px; }
+    .sail-rec-lbl { font-size:.62rem; color:var(--muted); text-transform:uppercase;
+      letter-spacing:.09em; flex-shrink:0; }
+
+    /* Preset conseillé — highlight orange */
+    .sail-preset.rec { background:rgba(255,187,51,.12); border-color:rgba(255,187,51,.45); color:#ffbb33; }
+
+    /* Presets — sélecteurs de ris */
+    .sail-presets { display:grid; grid-template-columns:repeat(3,1fr); gap:7px; margin-bottom:14px; }
+    .sail-preset { background:var(--dim); border:1px solid var(--border); color:var(--muted);
       border-radius:9px; padding:11px 6px; font-size:.78rem; font-weight:600; cursor:pointer;
-      text-align:center; line-height:1.3; transition:all .15s; -webkit-tap-highlight-color:transparent; }
-    .sail-preset:active { background:rgba(59,158,255,.2); border-color:var(--accent); }
-    .sail-preset.current { background:rgba(45,222,130,.1); border-color:rgba(45,222,130,.4); color:#2dde82; }
-    .sail-preset.current.is-spi { background:rgba(167,139,250,.12); border-color:rgba(167,139,250,.4); color:#c4b5fd; }
-    .sail-preset.current.is-reduced { background:rgba(251,191,36,.1); border-color:rgba(251,191,36,.35); color:#ffbb33; }
+      text-align:center; line-height:1.3; transition:all .12s; -webkit-tap-highlight-color:transparent; }
+    .sail-preset.sel { background:rgba(59,158,255,.15); border-color:var(--accent); color:var(--accent); }
+    .sail-preset.sel.is-spi { background:rgba(167,139,250,.15); border-color:#c4b5fd; color:#c4b5fd; }
+    .sail-preset.current { border-color:rgba(45,222,130,.5); }
+
+    /* Génois slider */
+    .genoa-row { display:flex; align-items:center; gap:10px; margin-bottom:14px; }
+    .genoa-lbl { font-size:.65rem; color:var(--muted); text-transform:uppercase;
+      letter-spacing:.1em; width:44px; flex-shrink:0; }
+    .genoa-slider { flex:1; -webkit-appearance:none; appearance:none; height:6px;
+      border-radius:3px; outline:none; cursor:pointer;
+      background: linear-gradient(to right, var(--accent) 0%, var(--accent) var(--val,100%), rgba(255,255,255,.1) var(--val,100%)); }
+    .genoa-slider::-webkit-slider-thumb { -webkit-appearance:none; width:26px; height:26px;
+      border-radius:50%; background:var(--accent); border:2px solid #fff;
+      box-shadow:0 1px 6px rgba(0,0,0,.5); }
+    .genoa-slider:disabled { opacity:.35; cursor:default; }
+    .genoa-pct { font-size:1rem; font-weight:700; color:var(--accent); min-width:40px;
+      text-align:right; font-variant-numeric:tabular-nums; }
+
+    /* Preview + apply */
+    .sail-apply-row { display:flex; align-items:center; gap:10px; }
+    .sail-preview { flex:1; font-size:.82rem; font-weight:600; color:var(--txt);
+      background:var(--dim); border-radius:8px; padding:9px 12px; }
+    #sail-apply-btn { background:rgba(45,222,130,.15); border:1px solid rgba(45,222,130,.4);
+      color:#2dde82; border-radius:9px; padding:10px 18px; font-size:.82rem; font-weight:700;
+      cursor:pointer; white-space:nowrap; -webkit-tap-highlight-color:transparent; }
+    #sail-apply-btn:active { background:rgba(45,222,130,.3); }
+    #sail-apply-btn:disabled { opacity:.4; cursor:default; }
+
+    /* ── Alertes vent ── */
+    #wind-alerts { display:flex; flex-direction:column; gap:6px; }
+    .wind-alert { display:flex; align-items:flex-start; gap:10px; border-radius:10px;
+      padding:10px 13px; border:1px solid; font-size:.8rem; line-height:1.35; }
+    .wind-alert.warn  { background:rgba(255,187,51,.1);  border-color:rgba(255,187,51,.4);  color:#ffbb33; }
+    .wind-alert.danger{ background:rgba(255,85,85,.1);   border-color:rgba(255,85,85,.4);   color:#ff5555; }
+    .wind-alert.info  { background:rgba(59,158,255,.1);  border-color:rgba(59,158,255,.35); color:#3b9eff; }
+    .wind-alert .al-icon { font-size:1.1rem; flex-shrink:0; margin-top:1px; }
+    .wind-alert .al-body { flex:1; }
+    .wind-alert .al-title { font-weight:700; margin-bottom:2px; }
+    .wind-alert .al-dismiss { background:none; border:none; color:inherit; opacity:.55;
+      font-size:1rem; cursor:pointer; padding:0 0 0 6px; flex-shrink:0; }
 
     /* ── Logbook quick ── */
     #log-btn { width: 100%; background: rgba(59,158,255,.1); border: 1px solid rgba(59,158,255,.35);
@@ -211,6 +259,9 @@
     </div>
   </div>
 
+  <!-- ── Alertes vent ── -->
+  <div id="wind-alerts"></div>
+
   <!-- ── Vent ── -->
   <div class="card">
     <div class="stitle">Vent vrai</div>
@@ -259,13 +310,27 @@
       <div class="sail-badge none" id="sail-current-badge">—</div>
       <span style="font-size:.68rem;color:var(--muted)" id="sail-current-since"></span>
     </div>
+    <div class="sail-rec-row">
+      <span class="sail-rec-lbl">Conseillé</span>
+      <div class="sail-badge rec" id="sail-rec-badge">—</div>
+    </div>
     <div class="sail-presets">
-      <button class="sail-preset" data-reef="0" data-genoa="100" data-spi="0" onclick="quickSail(this)">⛵<br>Plein voile</button>
-      <button class="sail-preset" data-reef="1" data-genoa="100" data-spi="0" onclick="quickSail(this)">1️⃣<br>1 ris</button>
-      <button class="sail-preset" data-reef="2" data-genoa="80"  data-spi="0" onclick="quickSail(this)">2️⃣<br>2 ris</button>
-      <button class="sail-preset" data-reef="3" data-genoa="50"  data-spi="0" onclick="quickSail(this)">3️⃣<br>3 ris</button>
-      <button class="sail-preset" data-reef="4" data-genoa="30"  data-spi="0" onclick="quickSail(this)">4️⃣<br>4 ris</button>
-      <button class="sail-preset" data-reef="0" data-genoa="100" data-spi="1" onclick="quickSail(this)">🪁<br>Spinnaker</button>
+      <button class="sail-preset" data-reef="0" data-genoa="100" data-spi="0" onclick="selectReef(this)">⛵<br>Plein voile</button>
+      <button class="sail-preset" data-reef="1" data-genoa="100" data-spi="0" onclick="selectReef(this)">1️⃣<br>1 ris</button>
+      <button class="sail-preset" data-reef="2" data-genoa="80"  data-spi="0" onclick="selectReef(this)">2️⃣<br>2 ris</button>
+      <button class="sail-preset" data-reef="3" data-genoa="50"  data-spi="0" onclick="selectReef(this)">3️⃣<br>3 ris</button>
+      <button class="sail-preset" data-reef="4" data-genoa="30"  data-spi="0" onclick="selectReef(this)">4️⃣<br>4 ris</button>
+      <button class="sail-preset" data-reef="0" data-genoa="100" data-spi="1" onclick="selectReef(this)">🪁<br>Spinnaker</button>
+    </div>
+    <div class="genoa-row" id="genoa-row">
+      <span class="genoa-lbl">Génois</span>
+      <input type="range" id="genoa-slider" class="genoa-slider" min="0" max="100" value="100"
+             oninput="updateSailPreview()">
+      <span class="genoa-pct" id="genoa-pct">100%</span>
+    </div>
+    <div class="sail-apply-row">
+      <div class="sail-preview" id="sail-preview-label">Sélectionner une config…</div>
+      <button id="sail-apply-btn" onclick="applySail()" disabled>✓ Appliquer</button>
     </div>
   </div>
 
@@ -328,6 +393,11 @@ let data = null;
 let selectedType = 'note';
 let activeRouteId = null;
 let autoRefreshTimer = null;
+let sailPrefs = null;          // seuils adaptatifs depuis /api/sail-preferences
+let _divStart = null;          // timestamp (ms) début de la divergence reco vs réel
+let _lastObsSent = 0;          // timestamp (ms) du dernier POST /api/sail-observation
+let _twsHistory = [];          // [{ts, tws}] — 30 derniers points pour tendance
+let _dismissedAlerts = new Set(); // alertes déjà fermées par le marin
 
 // ── Clock ──────────────────────────────────────────────────────────────────
 function updateClock() {
@@ -367,6 +437,161 @@ function windArrow(twd) {
   return arrows[Math.round(((twd + 22.5) % 360) / 45) % 8];
 }
 
+// ── Sail recommendation ────────────────────────────────────────────────────
+function recommendSailConfig(tws, twa) {
+  let reef, genoa, spi = false;
+
+  // Utilise les seuils adaptatifs si disponibles
+  if (sailPrefs && sailPrefs.bands) {
+    const band = sailPrefs.bands.find(b => tws >= b.tws_min && tws < b.tws_max);
+    if (band) { reef = band.adapted_reef; genoa = band.adapted_genoa; }
+  }
+  // Sinon seuils par défaut
+  if (reef === undefined) {
+    if      (tws < 8)  { reef = 0; genoa = 100; }
+    else if (tws < 15) { reef = 0; genoa = 100; }
+    else if (tws < 20) { reef = 1; genoa = 100; }
+    else if (tws < 25) { reef = 2; genoa = 80;  }
+    else if (tws < 30) { reef = 3; genoa = 50;  }
+    else if (tws < 38) { reef = 4; genoa = 30;  }
+    else               { reef = 4; genoa = 0;   }
+  }
+
+  // TWA refinements
+  if (twa !== null) {
+    const absA = Math.abs(twa);
+    if (absA < 40 && genoa > 50) genoa = Math.max(50, genoa - 20);
+    if (absA > 130 && tws < 12) spi = true;
+  }
+
+  // Badge label
+  let label;
+  if (spi) {
+    label = '🪁 Spinnaker';
+  } else if (reef === 0) {
+    label = genoa >= 100 ? '⛵ Plein voile' : `⛵ Génois ${genoa}%`;
+  } else {
+    label = `${reef} ris + Génois ${genoa}%`;
+  }
+
+  const badge = document.getElementById('sail-rec-badge');
+  if (badge) badge.textContent = label;
+
+  // Highlight preset correspondant en orange
+  document.querySelectorAll('.sail-preset').forEach(btn => {
+    const r = parseInt(btn.dataset.reef);
+    const s = parseInt(btn.dataset.spi);
+    const match = spi ? s === 1 : (s === 0 && r === reef);
+    btn.classList.toggle('rec', match);
+  });
+
+  return { reef, genoa, spi };
+}
+
+// ── Alertes vent ──────────────────────────────────────────────────────────
+
+// Bandes TWS pour détecter les changements de régime
+const TWS_BANDS = [
+  { max: 8,  label: '< 8 kts',   regime: 'petite brise' },
+  { max: 15, label: '8–15 kts',  regime: 'brise' },
+  { max: 20, label: '15–20 kts', regime: 'brise fraîche' },
+  { max: 25, label: '20–25 kts', regime: 'bon frais' },
+  { max: 30, label: '25–30 kts', regime: 'coup de vent' },
+  { max: 38, label: '30–38 kts', regime: 'fort coup de vent' },
+  { max: 99, label: '> 38 kts',  regime: 'tempête' },
+];
+
+function getTwsBand(tws) {
+  return TWS_BANDS.findIndex(b => tws < b.max);
+}
+
+function checkWindAlerts(tws, forecast12h) {
+  const alerts = [];
+  const now = Date.now();
+
+  // 1. Tendance sur les 15 dernières minutes
+  _twsHistory.push({ ts: now, tws });
+  // Garde seulement les 30 derniers points (max 30 min)
+  _twsHistory = _twsHistory.filter(p => now - p.ts < 30 * 60 * 1000);
+
+  const ago15 = _twsHistory.find(p => now - p.ts >= 13 * 60 * 1000);
+  let trend = null;
+  if (ago15) {
+    trend = tws - ago15.tws;
+    if (trend >= 5) {
+      alerts.push({ id: 'trend-up', level: 'warn', icon: '📈',
+        title: `Vent en hausse +${trend.toFixed(0)} kts / 15 min`,
+        body: `${ago15.tws.toFixed(0)} → ${tws.toFixed(0)} kts` });
+    } else if (trend <= -5) {
+      alerts.push({ id: 'trend-dn', level: 'info', icon: '📉',
+        title: `Vent en baisse ${trend.toFixed(0)} kts / 15 min`,
+        body: `${ago15.tws.toFixed(0)} → ${tws.toFixed(0)} kts` });
+    }
+  }
+
+  // 2. Prévi 3h — changement de bande
+  if (forecast12h && forecast12h.length) {
+    const fc3h = forecast12h.slice(0, 3);
+    const maxFc = Math.max(...fc3h.map(f => f.tws || 0));
+    const minFc = Math.min(...fc3h.map(f => f.tws || 99));
+    const curBand = getTwsBand(tws);
+    const maxBand = getTwsBand(maxFc);
+    const minBand = getTwsBand(minFc);
+
+    if (maxBand > curBand) {
+      const delta = (maxFc - tws).toFixed(0);
+      const b = TWS_BANDS[maxBand];
+      const lvl = maxBand >= 5 ? 'danger' : 'warn';
+      alerts.push({ id: `fc-up-${maxBand}`, level: lvl, icon: '⚠️',
+        title: `Vent attendu ${b.label} dans les 3h`,
+        body: `${tws.toFixed(0)} → ~${maxFc.toFixed(0)} kts (+${delta}) — ${b.regime}` });
+    } else if (minBand < curBand) {
+      alerts.push({ id: `fc-dn-${minBand}`, level: 'info', icon: '✅',
+        title: `Vent prévu en baisse dans les 3h`,
+        body: `${tws.toFixed(0)} → ~${minFc.toFixed(0)} kts — ${TWS_BANDS[minBand].regime}` });
+    }
+  }
+
+  // 3. Seuil critique immédiat
+  if (tws >= 30 && tws < 38) {
+    alerts.push({ id: 'crit-30', level: 'danger', icon: '🚨',
+      title: 'Coup de vent — vérifier les voiles',
+      body: `${tws.toFixed(0)} kts — 4 ris recommandés` });
+  } else if (tws >= 38) {
+    alerts.push({ id: 'crit-38', level: 'danger', icon: '🚨',
+      title: 'Tempête !',
+      body: `${tws.toFixed(0)} kts` });
+  }
+
+  // Filtrer les alertes déjà dismissées (reset si la valeur change de bande)
+  const toShow = alerts.filter(a => !_dismissedAlerts.has(a.id));
+
+  // Render
+  const container = document.getElementById('wind-alerts');
+  if (!container) return;
+  if (!toShow.length) { container.innerHTML = ''; return; }
+
+  container.innerHTML = toShow.map(a => `
+    <div class="wind-alert ${a.level}">
+      <span class="al-icon">${a.icon}</span>
+      <div class="al-body">
+        <div class="al-title">${a.title}</div>
+        <div>${a.body}</div>
+      </div>
+      <button class="al-dismiss" onclick="dismissAlert('${a.id}')" title="Fermer">✕</button>
+    </div>`).join('');
+}
+
+function dismissAlert(id) {
+  _dismissedAlerts.add(id);
+  // Auto-reset dismiss après 30 min
+  setTimeout(() => _dismissedAlerts.delete(id), 30 * 60 * 1000);
+  // Re-render (sans recalculer)
+  document.querySelectorAll(`[onclick="dismissAlert('${id}')"]`).forEach(btn => {
+    btn.closest('.wind-alert').remove();
+  });
+}
+
 // ── Sail config ───────────────────────────────────────────────────────────
 function renderSailConfig(sc) {
   const badge = document.getElementById('sail-current-badge');
@@ -397,16 +622,77 @@ function renderSailConfig(sc) {
   });
 }
 
-async function quickSail(btn) {
-  const reef = parseInt(btn.dataset.reef);
-  const genoa = parseInt(btn.dataset.genoa);
-  const spi = parseInt(btn.dataset.spi);
+// ── Sail config selector ──────────────────────────────────────────────────
 
-  // Confirmation si réduction significative
-  const label = btn.textContent.trim().replace('\n',' ');
+function selectReef(btn) {
+  // Deselect all, select clicked
+  document.querySelectorAll('.sail-preset').forEach(b => b.classList.remove('sel'));
+  btn.classList.add('sel');
+
+  const spi = parseInt(btn.dataset.spi);
+  const defaultGenoa = parseInt(btn.dataset.genoa);
+
+  // Spinnaker: disable genoa slider (not relevant)
+  const slider = document.getElementById('genoa-slider');
+  const genoaRow = document.getElementById('genoa-row');
+  if (spi) {
+    slider.disabled = true;
+    genoaRow.style.opacity = '.4';
+  } else {
+    slider.disabled = false;
+    genoaRow.style.opacity = '';
+    slider.value = defaultGenoa;
+  }
+  updateSailPreview();
+}
+
+function updateSailPreview() {
+  const slider = document.getElementById('genoa-slider');
+  const pctEl = document.getElementById('genoa-pct');
+  const previewEl = document.getElementById('sail-preview-label');
+  const applyBtn = document.getElementById('sail-apply-btn');
+  const val = parseInt(slider.value);
+
+  // Update slider gradient
+  slider.style.setProperty('--val', val + '%');
+  pctEl.textContent = val + '%';
+
+  const selBtn = document.querySelector('.sail-preset.sel');
+  if (!selBtn) {
+    previewEl.textContent = 'Sélectionner une config…';
+    applyBtn.disabled = true;
+    return;
+  }
+
+  const spi = parseInt(selBtn.dataset.spi);
+  const reef = parseInt(selBtn.dataset.reef);
+
+  let label;
+  if (spi) {
+    label = '🪁 Spinnaker';
+  } else if (reef === 0) {
+    label = val >= 95 ? '⛵ Plein voile' : `⛵ Plein voile + Génois ${val}%`;
+  } else {
+    label = `${reef} ris + Génois ${val}%`;
+  }
+  previewEl.textContent = label;
+  applyBtn.disabled = false;
+}
+
+async function applySail() {
+  const selBtn = document.querySelector('.sail-preset.sel');
+  if (!selBtn) return;
+
+  const reef = parseInt(selBtn.dataset.reef);
+  const spi = parseInt(selBtn.dataset.spi);
+  const genoa = spi ? 100 : parseInt(document.getElementById('genoa-slider').value);
+  const label = document.getElementById('sail-preview-label').textContent;
+
   if (!confirm(`Changer la config voiles :\n→ ${label} ?`)) return;
 
-  btn.style.opacity = '.5';
+  const applyBtn = document.getElementById('sail-apply-btn');
+  applyBtn.disabled = true;
+  applyBtn.textContent = '…';
   try {
     const r = await fetch('/api/sail-configs/quick-change', {
       method: 'POST',
@@ -418,6 +704,9 @@ async function quickSail(btn) {
     });
     const d = await r.json();
     if (r.ok) {
+      // Deselect preset, reset UI
+      document.querySelectorAll('.sail-preset').forEach(b => b.classList.remove('sel'));
+      document.getElementById('sail-preview-label').textContent = 'Sélectionner une config…';
       await refresh();
     } else {
       alert('Erreur : ' + (d.error || 'inconnue'));
@@ -425,7 +714,8 @@ async function quickSail(btn) {
   } catch(e) {
     alert('Erreur réseau : ' + e.message);
   } finally {
-    btn.style.opacity = '';
+    applyBtn.disabled = false;
+    applyBtn.textContent = '✓ Appliquer';
   }
 }
 
@@ -439,6 +729,42 @@ function render(d) {
   const fc = d.forecast_12h || [];
 
   renderSailConfig(d.sail_config || null);
+
+  // Recommandation voiles + tracking divergence
+  let recConfig = null;
+  if (wind.tws != null) {
+    recConfig = recommendSailConfig(wind.tws, wind.twa ?? null);
+    checkWindAlerts(wind.tws, fc);
+  }
+
+  if (recConfig && d.sail_config) {
+    const sc = d.sail_config;
+    const differs = recConfig.spi !== !!sc.spinnaker
+      || recConfig.reef !== sc.reef_count
+      || Math.abs(recConfig.genoa - sc.genoa_pct) >= 15;
+    const now = Date.now();
+    if (differs) {
+      if (!_divStart) _divStart = now;
+      // Envoie une observation si divergence stable > 5 min et pas envoyé depuis 10 min
+      if (now - _divStart > 5 * 60 * 1000 && now - _lastObsSent > 10 * 60 * 1000) {
+        _lastObsSent = now;
+        fetch('/api/sail-observation', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            tws: wind.tws, twa: wind.twa ?? null,
+            rec_reef: recConfig.reef, rec_genoa: recConfig.genoa,
+            rec_spi: recConfig.spi ? 1 : 0,
+            actual_reef: sc.reef_count, actual_genoa: sc.genoa_pct,
+            actual_spi: sc.spinnaker ? 1 : 0,
+            sog: pos.sog ?? null,
+          }),
+        }).catch(() => {});
+      }
+    } else {
+      _divStart = null;
+    }
+  }
 
   // SOG
   const sogEl = document.getElementById('sog');
@@ -650,8 +976,16 @@ function escHtml(s) {
                   .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
+// ── Sail preferences (adaptive thresholds) ────────────────────────────────
+async function fetchSailPrefs() {
+  try {
+    const r = await fetch('/api/sail-preferences');
+    if (r.ok) sailPrefs = await r.json();
+  } catch(e) { /* silently ignore */ }
+}
+
 // ── Init ──────────────────────────────────────────────────────────────────
-refresh().then(scheduleRefresh);
+fetchSailPrefs().then(() => refresh().then(scheduleRefresh));
 </script>
 </body>
 </html>
