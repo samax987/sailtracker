@@ -1,7 +1,5 @@
 {% extends "base.html" %}
-
-{% block title %}SailTracker — Précision des modèles{% endblock %}
-
+{% block title %}SailTracker — Modèles météo{% endblock %}
 {% block nav_accuracy %}active{% endblock %}
 
 {% block head_scripts %}
@@ -10,162 +8,310 @@
 
 {% block head_styles %}
 <style>
-.content { max-width: 1400px; margin: 0 auto; padding: 16px; }
-.info-box {
-  background: rgba(96,165,250,0.07); border: 1px solid rgba(96,165,250,0.2);
-  border-radius: 8px; padding: 12px 16px; margin-bottom: 16px;
-  font-size: .85rem; color: var(--text-muted);
-}
-.info-box strong { color: var(--accent-info); }
-h2 { font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .1em; color: var(--accent-info); margin: 16px 0 8px; }
-.table-wrap { overflow-x: auto; margin-bottom: 20px; }
-table { border-collapse: collapse; min-width: 600px; font-size: .82rem; }
-thead th {
-  background: var(--bg-tertiary); color: var(--text-muted);
-  font-size: .68rem; text-transform: uppercase; letter-spacing: .08em;
-  padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border); white-space: nowrap;
-}
-tbody td { padding: 8px 12px; border-bottom: 1px solid rgba(45,74,122,0.4); }
-.zone-label { font-weight: 600; color: var(--text-primary); white-space: nowrap; }
-.cell-good { background: rgba(74,222,128,.15); color: var(--accent-good); border-radius: 4px; padding: 3px 8px; font-weight: 700; font-size: .8rem; white-space: nowrap; }
-.cell-ok   { background: rgba(251,191,36,.12); color: var(--accent-warn); border-radius: 4px; padding: 3px 8px; font-weight: 700; font-size: .8rem; white-space: nowrap; }
-.cell-bad  { background: rgba(248,113,113,.1); color: var(--accent-danger); border-radius: 4px; padding: 3px 8px; font-weight: 700; font-size: .8rem; white-space: nowrap; }
-.cell-empty { color: var(--text-muted); font-size: .75rem; }
-.charts-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 20px; }
-@media(max-width:800px){ .charts-grid { grid-template-columns: 1fr; } }
-.chart-card { background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 8px; padding: 12px; }
-.chart-title { font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--accent-info); margin-bottom: 10px; }
-.chart-wrap { position: relative; height: 200px; }
-.legend-pills { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 6px; }
-.legend-pill { display: flex; align-items: center; gap: 4px; font-size: .68rem; color: var(--text-muted); }
-.legend-dot { width: 10px; height: 10px; border-radius: 50%; }
+  .wrap { max-width:1400px; margin:0 auto; padding:16px; }
+
+  /* Banner */
+  .banner { display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+    background:rgba(96,165,250,.07); border:1px solid rgba(96,165,250,.2);
+    border-radius:8px; padding:11px 16px; margin-bottom:20px;
+    font-size:.82rem; color:var(--text-muted); }
+  .banner strong { color:var(--accent-info); }
+
+  /* Section title */
+  .stitle { font-size:.72rem; font-weight:700; text-transform:uppercase; letter-spacing:.1em;
+    color:var(--accent-info); margin:22px 0 10px; display:flex; align-items:center; gap:8px; }
+  .stitle::after { content:''; flex:1; height:1px; background:var(--border); }
+
+  /* Score cards */
+  .score-row { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-bottom:4px; }
+  @media(max-width:700px){ .score-row { grid-template-columns:1fr; } }
+  .score-card { background:var(--bg-secondary); border:1px solid var(--border);
+    border-radius:10px; padding:16px 18px 14px; position:relative; }
+  .score-card.rank-1 { border-color:rgba(251,191,36,.5); }
+  .rank-badge { position:absolute; top:10px; right:12px; font-size:.65rem; font-weight:800;
+    letter-spacing:.05em; padding:2px 8px; border-radius:20px; }
+  .rank-1 .rank-badge { background:rgba(251,191,36,.2); color:#fbbf24; border:1px solid rgba(251,191,36,.4); }
+  .rank-2 .rank-badge { background:rgba(148,163,184,.1); color:#94a3b8; border:1px solid rgba(148,163,184,.25); }
+  .rank-3 .rank-badge { background:rgba(100,116,139,.08); color:#64748b; border:1px solid rgba(100,116,139,.2); }
+  .sc-name { font-size:.72rem; font-weight:700; text-transform:uppercase; letter-spacing:.1em; margin-bottom:7px; }
+  .sc-val  { font-size:2rem; font-weight:800; line-height:1.1; }
+  .sc-unit { font-size:.72rem; color:var(--text-muted); margin-left:2px; }
+  .sc-sub  { font-size:.68rem; color:var(--text-muted); margin-top:4px; }
+  .bar-track { background:rgba(255,255,255,.06); border-radius:4px; height:5px; margin-top:11px; }
+  .bar-fill  { height:5px; border-radius:4px; }
+
+  /* Zone recommendation cards */
+  .zone-row { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-bottom:4px; }
+  @media(max-width:900px){ .zone-row { grid-template-columns:repeat(2,1fr); } }
+  @media(max-width:480px){ .zone-row { grid-template-columns:1fr; } }
+  .zone-card { background:var(--bg-secondary); border:1px solid var(--border); border-radius:9px; padding:14px; }
+  .zc-name  { font-size:.64rem; font-weight:700; text-transform:uppercase; letter-spacing:.08em;
+    color:var(--text-muted); margin-bottom:7px; }
+  .zc-model { font-size:.9rem; font-weight:700; margin-bottom:3px; }
+  .zc-err   { font-size:.75rem; }
+  .zc-bars  { margin-top:11px; display:flex; flex-direction:column; gap:5px; }
+  .zb-row   { display:flex; align-items:center; gap:6px; font-size:.64rem; }
+  .zb-lbl   { color:var(--text-muted); width:34px; flex-shrink:0; }
+  .zb-track { flex:1; background:rgba(255,255,255,.06); border-radius:3px; height:5px; }
+  .zb-fill  { height:5px; border-radius:3px; }
+  .zb-val   { color:var(--text-muted); width:38px; text-align:right; flex-shrink:0; }
+
+  /* Toggle */
+  .toggle-group { display:inline-flex; border:1px solid var(--border); border-radius:6px; overflow:hidden; margin-bottom:14px; }
+  .tog { background:transparent; border:none; color:var(--text-muted); padding:5px 14px;
+    cursor:pointer; font-size:.78rem; transition:all .15s; }
+  .tog.active { background:rgba(96,165,250,.15); color:var(--accent-info); font-weight:600; }
+
+  /* Comparison table */
+  .comp-wrap { overflow-x:auto; margin-bottom:4px; }
+  .comp-table { border-collapse:collapse; width:100%; font-size:.78rem; min-width:680px; }
+  .comp-table th { background:var(--bg-tertiary); color:var(--text-muted); font-size:.65rem;
+    text-transform:uppercase; letter-spacing:.08em; padding:8px 10px; text-align:left;
+    border-bottom:1px solid var(--border); white-space:nowrap; }
+  .comp-table th.mh { text-align:center; }
+  .comp-table td { padding:5px 10px; border-bottom:1px solid rgba(45,74,122,.3); vertical-align:middle; }
+  .comp-table tr:last-child td { border-bottom:none; }
+  .zone-lbl { font-weight:700; border-right:1px solid var(--border) !important; }
+  .h-lbl    { color:var(--text-muted); font-size:.7rem; }
+  .mc       { text-align:center; }
+  .chip { display:inline-flex; align-items:center; gap:4px; border-radius:5px; padding:3px 8px;
+    font-size:.76rem; font-weight:700; white-space:nowrap; border-width:1px; border-style:solid; }
+  .chip-good { background:rgba(74,222,128,.12); color:#4ade80; border-color:rgba(74,222,128,.3); }
+  .chip-ok   { background:rgba(251,191,36,.12);  color:#fbbf24; border-color:rgba(251,191,36,.3); }
+  .chip-bad  { background:rgba(248,113,113,.1);  color:#f87171; border-color:rgba(248,113,113,.25); }
+  .chip-dir  { display:none; background:rgba(148,163,184,.1); color:#94a3b8; border-color:rgba(148,163,184,.2); }
+  .chip-bar-w { width:36px; background:rgba(255,255,255,.08); border-radius:3px; height:4px; display:inline-block; vertical-align:middle; }
+  .chip-bar   { height:4px; border-radius:3px; }
+  .star { font-size:.6rem; opacity:.75; }
+
+  /* Charts */
+  .charts-2 { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  @media(max-width:860px){ .charts-2 { grid-template-columns:1fr; } }
+  .chart-card { background:var(--bg-secondary); border:1px solid var(--border); border-radius:9px; padding:13px; }
+  .ct { font-size:.68rem; font-weight:700; text-transform:uppercase; letter-spacing:.08em;
+    color:var(--accent-info); margin-bottom:10px; }
+  .chart-h { position:relative; height:175px; }
+  .trend-card { background:var(--bg-secondary); border:1px solid var(--border);
+    border-radius:9px; padding:14px; }
+  .trend-h { position:relative; height:200px; }
+
+  /* Legend */
+  .leg-row { display:flex; gap:14px; flex-wrap:wrap; margin-top:8px; }
+  .leg { display:flex; align-items:center; gap:5px; font-size:.7rem; color:var(--text-muted); }
+  .leg-dot { width:10px; height:10px; border-radius:50%; flex-shrink:0; }
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="content">
+{% set MC = {'ecmwf_ifs025':'#60a5fa','gfs_seamless':'#4ade80','icon_seamless':'#fbbf24'} %}
+{% set ML = {'ecmwf_ifs025':'ECMWF IFS','gfs_seamless':'GFS','icon_seamless':'ICON'} %}
 
+<div class="wrap">
+
+{# ── Banner ── #}
 {% if days_count < 7 %}
-<div class="info-box">
-  ⏳ <strong>Accumulation en cours</strong> — {{ days_count }}/7 jours de données disponibles.
-  Le vérificateur tourne chaque jour à 06h UTC et accumule progressivement les erreurs de prévision.
-</div>
+<div class="banner">⏳ <strong>Accumulation en cours</strong> — {{ days_count }}/7 jours. Vérificateur actif chaque nuit à 06h UTC.</div>
 {% else %}
-<div class="info-box">
-  ✅ <strong>{{ days_count }} jours</strong> de données de vérification.
-  Erreurs calculées sur 4 zones × 3 modèles × 5 horizons.
-  Vert &lt; 3 kts • Orange &lt; 6 kts • Rouge ≥ 6 kts.
+<div class="banner">
+  ✅ <strong>{{ days_count }} jours</strong> de vérification sur 4 zones × 3 modèles × 5 horizons.
+  &nbsp;|&nbsp; Vert &lt; 3 kts &nbsp;·&nbsp; Orange &lt; 6 kts &nbsp;·&nbsp; Rouge ≥ 6 kts
 </div>
 {% endif %}
 
-<h2>Meilleur modèle par zone et horizon</h2>
-<div class="table-wrap">
-<table>
-  <thead>
-    <tr>
-      <th>Zone</th>
-      {% for h in horizons %}<th>J+{{ h }}</th>{% endfor %}
-    </tr>
-  </thead>
-  <tbody>
-    {% for zone in zones %}
-    <tr>
-      <td class="zone-label">{{ zone.replace('_',' ').title() }}</td>
-      {% for h in horizons %}
-      {% set entry = best_table.get(zone, {}).get(h) %}
-      <td>
-        {% if entry %}
-          {% set err = entry.error %}
-          {% if err < 3 %}
-          <span class="cell-good">{{ entry.model.split('_')[0].upper() }}<br>±{{ err }} kts</span>
-          {% elif err < 6 %}
-          <span class="cell-ok">{{ entry.model.split('_')[0].upper() }}<br>±{{ err }} kts</span>
-          {% else %}
-          <span class="cell-bad">{{ entry.model.split('_')[0].upper() }}<br>±{{ err }} kts</span>
-          {% endif %}
-        {% else %}
-          <span class="cell-empty">—</span>
-        {% endif %}
-      </td>
-      {% endfor %}
-    </tr>
-    {% endfor %}
-  </tbody>
-</table>
-</div>
-
-<h2>Évolution de l'erreur par zone</h2>
-<div class="charts-grid">
-{% for zone in zones %}
-<div class="chart-card">
-  <div class="chart-title">{{ zone.replace('_', ' ').title() }}</div>
-  <div class="chart-wrap"><canvas id="chart-{{ zone }}"></canvas></div>
+{# ── Classement global ── #}
+<div class="stitle">Classement global <span style="font-weight:400;font-size:.68rem;color:var(--text-muted);text-transform:none;letter-spacing:0">moyenne toutes zones · J+1→J+7</span></div>
+<div class="score-row">
+{% for item in global_scores_ranked %}
+{% set col = MC[item.model] %}
+<div class="score-card rank-{{ item.rank }}">
+  <div class="rank-badge">#{{ item.rank }}</div>
+  <div class="sc-name" style="color:{{ col }}">{{ ML[item.model] }}</div>
+  <div>
+    <span class="sc-val" style="color:{{ col }}">{{ item.score }}</span>
+    <span class="sc-unit">kts</span>
+  </div>
+  <div class="sc-sub">erreur vitesse moyenne</div>
+  <div class="bar-track">
+    <div class="bar-fill" style="background:{{ col }};width:{{ [((worst_score - item.score) / worst_score * 80 + 20)|int, 100]|min }}%"></div>
+  </div>
 </div>
 {% endfor %}
 </div>
 
-<div class="legend-pills">
-  <span style="font-size:.72rem;color:var(--text-muted);margin-right:4px">Modèles :</span>
-  <span class="legend-pill"><span class="legend-dot" style="background:var(--accent-info)"></span>ECMWF IFS</span>
-  <span class="legend-pill"><span class="legend-dot" style="background:var(--accent-good)"></span>GFS</span>
-  <span class="legend-pill"><span class="legend-dot" style="background:var(--accent-warn)"></span>ICON</span>
+{# ── Recommandations par zone ── #}
+<div class="stitle">Recommandation par zone <span style="font-weight:400;font-size:.68rem;color:var(--text-muted);text-transform:none;letter-spacing:0">barres = erreur J+1</span></div>
+<div class="zone-row">
+{% for z in zones %}
+{% set best = zone_best.get(z) %}
+{% set bars = zone_mini_bars.get(z, []) %}
+<div class="zone-card">
+  <div class="zc-name">{{ z.replace('_',' ').title() }}</div>
+  {% if best %}
+  {% set col = MC[best.model] %}
+  <div class="zc-model" style="color:{{ col }}">{{ ML[best.model] }}</div>
+  {% set e = best.error %}
+  <div class="zc-err">
+    {% if e < 3 %}<span style="color:#4ade80">✓ ±{{ e }} kts moy.</span>
+    {% elif e < 6 %}<span style="color:#fbbf24">~ ±{{ e }} kts moy.</span>
+    {% else %}<span style="color:#f87171">⚠ ±{{ e }} kts moy.</span>{% endif %}
+  </div>
+  {% if bars %}
+  <div class="zc-bars">
+    {% for b in bars %}
+    <div class="zb-row">
+      <span class="zb-lbl" style="color:{{ MC[b.model] }}">{{ ML[b.model][:4] }}</span>
+      <div class="zb-track"><div class="zb-fill" style="background:{{ MC[b.model] }};width:{{ b.bar_w }}%"></div></div>
+      <span class="zb-val">±{{ b.error }}</span>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+  {% else %}<div class="zc-err" style="color:var(--text-muted)">—</div>{% endif %}
+</div>
+{% endfor %}
 </div>
 
+{# ── Tableau comparatif ── #}
+<div class="stitle">Comparaison détaillée</div>
+<div class="toggle-group">
+  <button class="tog active" id="tog-speed" onclick="setMetric('speed')">Vitesse (kts)</button>
+  <button class="tog" id="tog-dir"   onclick="setMetric('dir')">Direction (°)</button>
 </div>
+<div class="comp-wrap">
+<table class="comp-table">
+  <thead>
+    <tr>
+      <th>Zone</th><th>Horizon</th>
+      <th class="mh" style="color:#60a5fa">ECMWF IFS</th>
+      <th class="mh" style="color:#4ade80">GFS</th>
+      <th class="mh" style="color:#fbbf24">ICON</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for row in comp_rows %}
+  <tr>
+    {% if row.first_for_zone %}
+    <td class="zone-lbl" rowspan="{{ row.zone_rowspan }}">{{ row.zone.replace('_',' ').title() }}</td>
+    {% endif %}
+    <td class="h-lbl">J+{{ row.horizon }}</td>
+    {% for m in ['ecmwf_ifs025','gfs_seamless','icon_seamless'] %}
+    {% set cell = row.cells[m] %}
+    <td class="mc">
+      {% if cell.speed is not none %}
+      {% if cell.speed < 3 %}{% set cls='chip-good' %}{% set fg='#4ade80' %}
+      {% elif cell.speed < 6 %}{% set cls='chip-ok' %}{% set fg='#fbbf24' %}
+      {% else %}{% set cls='chip-bad' %}{% set fg='#f87171' %}{% endif %}
+      <span class="chip {{ cls }} speed-chip">
+        ±{{ cell.speed }}
+        <span class="chip-bar-w"><span class="chip-bar" style="background:{{ fg }};width:{{ cell.bar_w }}%"></span></span>
+        {% if cell.is_best %}<span class="star">★</span>{% endif %}
+      </span>
+      <span class="chip chip-dir dir-chip">
+        {% if cell.dir is not none %}{{ cell.dir }}°{% else %}—{% endif %}
+      </span>
+      {% else %}<span style="color:var(--text-muted);font-size:.7rem" class="speed-chip">—</span>
+      <span style="color:var(--text-muted);font-size:.7rem;display:none" class="dir-chip">—</span>{% endif %}
+    </td>
+    {% endfor %}
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+
+{# ── Tendance 30 jours ── #}
+<div class="stitle">Tendance sur 30 jours <span style="font-weight:400;font-size:.68rem;color:var(--text-muted);text-transform:none;letter-spacing:0">erreur journalière moyenne toutes zones</span></div>
+<div class="trend-card">
+  <div class="trend-h"><canvas id="chart-trend"></canvas></div>
+  <div class="leg-row">
+    <span class="leg"><span class="leg-dot" style="background:#60a5fa"></span>ECMWF IFS</span>
+    <span class="leg"><span class="leg-dot" style="background:#4ade80"></span>GFS</span>
+    <span class="leg"><span class="leg-dot" style="background:#fbbf24"></span>ICON</span>
+  </div>
+</div>
+
+{# ── Erreur par horizon ── #}
+<div class="stitle">Erreur par horizon (J+1 → J+7)</div>
+<div class="charts-2">
+{% for z in zones %}
+<div class="chart-card">
+  <div class="ct">{{ z.replace('_',' ').title() }}</div>
+  <div class="chart-h"><canvas id="chart-{{ z }}"></canvas></div>
+</div>
+{% endfor %}
+</div>
+<div class="leg-row" style="margin-bottom:24px">
+  <span class="leg"><span class="leg-dot" style="background:#60a5fa"></span>ECMWF IFS</span>
+  <span class="leg"><span class="leg-dot" style="background:#4ade80"></span>GFS</span>
+  <span class="leg"><span class="leg-dot" style="background:#fbbf24"></span>ICON</span>
+</div>
+
+</div>{# /wrap #}
 
 <script>
-const horizons = {{ horizons | tojson }};
-const chartData = {{ chart_data | tojson }};
-const zones = {{ zones | tojson }};
-const modelColors = {
-  'ecmwf_ifs025': '#60a5fa',
-  'gfs_seamless':  '#4ade80',
-  'icon_seamless': '#fbbf24',
-};
-const modelLabels = {
-  'ecmwf_ifs025': 'ECMWF IFS',
-  'gfs_seamless':  'GFS',
-  'icon_seamless': 'ICON',
-};
+const horizons   = {{ horizons | tojson }};
+const chartData  = {{ chart_data | tojson }};
+const zones      = {{ zones | tojson }};
+const trendDates = {{ trend_dates | tojson }};
+const trendData  = {{ trend_data | tojson }};
+const COLORS = { ecmwf_ifs025:'#60a5fa', gfs_seamless:'#4ade80', icon_seamless:'#fbbf24' };
+const LABELS = { ecmwf_ifs025:'ECMWF IFS', gfs_seamless:'GFS', icon_seamless:'ICON' };
 
-zones.forEach(zone => {
-  const canvas = document.getElementById('chart-' + zone);
-  if (!canvas) return;
-  const zoneData = chartData[zone] || {};
-  const datasets = Object.entries(zoneData).map(([model, vals]) => ({
-    label: modelLabels[model] || model,
-    data: vals,
-    borderColor: modelColors[model] || '#aaa',
-    backgroundColor: 'transparent',
-    borderWidth: 2,
-    pointRadius: 4,
-    tension: 0.3,
-    spanGaps: true,
-  }));
-
-  new Chart(canvas, {
-    type: 'line',
-    data: { labels: horizons.map(h => 'J+' + h), datasets },
-    options: {
-      responsive: true, maintainAspectRatio: false,
-      plugins: {
-        legend: { display: false },
-        tooltip: {
-          backgroundColor: '#1a2744', titleColor: '#e2e8f0', bodyColor: '#94a3b8',
-          borderColor: '#2d4a7a', borderWidth: 1,
-          callbacks: { label: ctx => `${ctx.dataset.label}: ±${ctx.parsed.y != null ? ctx.parsed.y.toFixed(2) + ' kts' : '—'}` },
-        },
-      },
-      scales: {
-        x: { grid: { color: 'rgba(45,74,122,0.4)' }, ticks: { color: '#94a3b8', font: { size: 10 } } },
-        y: {
-          grid: { color: 'rgba(45,74,122,0.4)' },
-          ticks: { color: '#94a3b8', font: { size: 10 }, callback: v => '±' + v + ' kts' },
-          min: 0, suggestedMax: 10,
-        },
+function makeChartOpts(yLabel, sugMax) {
+  return {
+    responsive:true, maintainAspectRatio:false,
+    plugins:{
+      legend:{ display:false },
+      tooltip:{
+        backgroundColor:'#1a2744', titleColor:'#e2e8f0', bodyColor:'#94a3b8',
+        borderColor:'#2d4a7a', borderWidth:1,
+        callbacks:{ label: c => `${c.dataset.label}: ±${c.parsed.y != null ? c.parsed.y.toFixed(2)+' kts' : '—'}` },
       },
     },
+    scales:{
+      x:{ grid:{ color:'rgba(45,74,122,.3)' }, ticks:{ color:'#94a3b8', font:{size:10} } },
+      y:{ min:0, suggestedMax: sugMax || 8, grid:{ color:'rgba(45,74,122,.3)' },
+          ticks:{ color:'#94a3b8', font:{size:10}, callback: v => '±'+v } },
+    },
+  };
+}
+
+// Trend chart
+(function(){
+  const ctx = document.getElementById('chart-trend');
+  if (!ctx) return;
+  const step = Math.max(1, Math.floor(trendDates.length / 10));
+  const labels = trendDates.map((d,i) => i % step === 0 ? d.slice(5) : '');
+  const datasets = Object.entries(trendData).map(([m, vals]) => ({
+    label: LABELS[m]||m, data:vals,
+    borderColor: COLORS[m]||'#aaa', backgroundColor:'transparent',
+    borderWidth:2, pointRadius:2, tension:.3, spanGaps:true,
+  }));
+  new Chart(ctx, { type:'line', data:{ labels, datasets }, options: makeChartOpts(null, 8) });
+})();
+
+// Per-zone horizon charts
+zones.forEach(z => {
+  const ctx = document.getElementById('chart-'+z);
+  if (!ctx) return;
+  const datasets = Object.entries(chartData[z]||{}).map(([m,vals]) => ({
+    label: LABELS[m]||m, data:vals,
+    borderColor: COLORS[m]||'#aaa', backgroundColor:'transparent',
+    borderWidth:2, pointRadius:4, tension:.25, spanGaps:true,
+  }));
+  new Chart(ctx, {
+    type:'line',
+    data:{ labels: horizons.map(h=>'J+'+h), datasets },
+    options: makeChartOpts(null, 8),
   });
 });
+
+// Toggle speed / direction
+function setMetric(m) {
+  document.getElementById('tog-speed').classList.toggle('active', m==='speed');
+  document.getElementById('tog-dir').classList.toggle('active', m==='dir');
+  document.querySelectorAll('.speed-chip').forEach(el => el.style.display = m==='speed' ? '' : 'none');
+  document.querySelectorAll('.dir-chip').forEach(el => el.style.display  = m==='dir'   ? '' : 'none');
+}
 </script>
 {% endblock %}
