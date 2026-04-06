@@ -1,0 +1,165 @@
+{% extends "base.html" %}
+{% block title %}Journal de bord — {{ route.name }}{% endblock %}
+{% block content %}
+<style>
+  :root { --bg:#0d1117; --bg2:#161b22; --bg3:#21262d; --border:rgba(48,54,61,0.8);
+          --accent:#4a9eff; --text:#e6edf3; --text-dim:#8b949e;
+          --green:#3fb950; --orange:#d29922; --red:#f85149; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:var(--bg); color:var(--text); font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; }
+  header { background:var(--bg2); border-bottom:1px solid var(--border); padding:12px 16px;
+           display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+  .header-title { font-size:1rem; font-weight:700; color:#7ecfff; }
+  .phase-badge { padding:3px 10px; border-radius:20px; font-size:0.7rem; font-weight:700; text-transform:uppercase; }
+  .phase-badge.active { background:rgba(74,222,128,0.15); color:#4ade80; border:1px solid rgba(74,222,128,0.3); }
+  .phase-badge.planning { background:rgba(96,165,250,0.15); color:#60a5fa; border:1px solid rgba(96,165,250,0.3); }
+  .phase-badge.completed { background:rgba(251,191,36,0.15); color:#fbbf24; border:1px solid rgba(251,191,36,0.3); }
+  .btn { background:var(--bg3); border:1px solid var(--border); color:var(--text);
+         padding:6px 14px; border-radius:6px; cursor:pointer; font-size:0.82rem; text-decoration:none; }
+  .btn:hover { border-color:var(--accent); }
+  .container { max-width:900px; margin:0 auto; padding:20px 16px; }
+  .add-form { background:var(--bg2); border:1px solid var(--border); border-radius:10px;
+              padding:16px; margin-bottom:24px; }
+  .add-form h3 { font-size:0.85rem; color:var(--accent); margin-bottom:12px; }
+  .form-row { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:10px; }
+  .form-row select, .form-row input { background:var(--bg3); border:1px solid var(--border);
+    color:var(--text); padding:6px 10px; border-radius:6px; font-size:0.82rem; }
+  textarea { width:100%; background:var(--bg3); border:1px solid var(--border);
+             color:var(--text); padding:8px 10px; border-radius:6px; font-size:0.82rem;
+             resize:vertical; min-height:80px; font-family:inherit; }
+  .entries { display:flex; flex-direction:column; gap:10px; }
+  .entry { background:var(--bg2); border:1px solid var(--border); border-radius:8px; padding:12px 14px;
+           border-left:3px solid var(--border); transition:border-color 0.2s; }
+  .entry.note { border-left-color:#4a9eff; }
+  .entry.weather { border-left-color:#7dd3fc; }
+  .entry.sail_change { border-left-color:#4ade80; }
+  .entry.incident { border-left-color:#f87171; }
+  .entry.waypoint { border-left-color:#fbbf24; }
+  .entry.auto { border-left-color:#6b7280; opacity:0.8; }
+  .entry-header { display:flex; align-items:center; gap:10px; margin-bottom:6px; flex-wrap:wrap; }
+  .entry-type { font-size:0.65rem; font-weight:700; text-transform:uppercase; letter-spacing:.05em;
+                padding:2px 7px; border-radius:10px; background:rgba(255,255,255,0.08); }
+  .entry-ts { font-size:0.72rem; color:var(--text-dim); font-family:monospace; }
+  .entry-text { font-size:0.85rem; line-height:1.5; color:var(--text); }
+  .entry-meta { font-size:0.68rem; color:var(--text-dim); margin-top:6px; }
+  .entry-del { margin-left:auto; background:none; border:none; color:var(--text-dim); cursor:pointer;
+               font-size:0.75rem; padding:2px 6px; border-radius:4px; }
+  .entry-del:hover { color:var(--red); }
+  .empty { text-align:center; padding:48px; color:var(--text-dim); }
+  #loading { text-align:center; padding:24px; color:var(--text-dim); }
+</style>
+
+<header>
+  <a href="/passage" class="btn">← Passage</a>
+  <span class="header-title">📓 Journal de bord</span>
+  <span style="color:var(--text-dim);font-size:0.85rem">{{ route.name }}</span>
+  <span class="phase-badge {{ route.phase }}">{{ route.phase }}</span>
+</header>
+
+<div class="container">
+  <div class="add-form">
+    <h3>+ Nouvelle entrée</h3>
+    <div class="form-row">
+      <select id="entry-type">
+        <option value="note">📝 Note</option>
+        <option value="weather">🌊 Météo</option>
+        <option value="sail_change">⛵ Voilure</option>
+        <option value="incident">⚠️ Incident</option>
+        <option value="waypoint">📍 Waypoint</option>
+      </select>
+      <input type="datetime-local" id="entry-ts" placeholder="Date/heure (optionnel)" />
+    </div>
+    <textarea id="entry-text" placeholder="Décris la situation — conditions, manœuvres, observations…"></textarea>
+    <div class="form-row" style="margin-top:10px;justify-content:flex-end">
+      <button class="btn" onclick="addEntry()" id="btn-add" style="background:rgba(74,158,255,0.12);border-color:rgba(74,158,255,0.35);color:#4a9eff">
+        ✓ Enregistrer
+      </button>
+    </div>
+  </div>
+
+  <div id="loading">Chargement…</div>
+  <div class="entries" id="entries" style="display:none"></div>
+  <div class="empty" id="empty" style="display:none">
+    📓 Aucune entrée pour cette traversée.<br>
+    <span style="font-size:0.82rem">Utilisez le formulaire ci-dessus pour commencer votre journal.</span>
+  </div>
+</div>
+
+<script>
+const ROUTE_ID = {{ route.id }};
+const TYPE_ICONS = { note:'📝', weather:'🌊', sail_change:'⛵', incident:'⚠️', waypoint:'📍', auto:'🤖' };
+const TYPE_LABELS = { note:'Note', weather:'Météo', sail_change:'Voilure', incident:'Incident', waypoint:'Waypoint', auto:'Auto' };
+
+function escHtml(s) {
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+async function loadEntries() {
+  const resp = await fetch(`/api/logbook/${ROUTE_ID}`);
+  const data = await resp.json();
+  document.getElementById('loading').style.display = 'none';
+  const container = document.getElementById('entries');
+  const empty = document.getElementById('empty');
+  const entries = data.entries || [];
+  if (entries.length === 0) {
+    empty.style.display = '';
+    return;
+  }
+  container.style.display = '';
+  container.innerHTML = entries.map(e => {
+    const icon = TYPE_ICONS[e.entry_type] || '📝';
+    const label = TYPE_LABELS[e.entry_type] || e.entry_type;
+    const ts = (e.timestamp || '').slice(0, 16).replace('T', ' ');
+    const meta = [
+      e.wind_speed_kts ? `💨 ${Math.round(e.wind_speed_kts)} kts` : null,
+      e.sog_kts ? `🚤 ${e.sog_kts.toFixed(1)} kts` : null,
+      e.sea_state ? `🌊 ${e.sea_state}` : null,
+      e.sail_config ? `⛵ ${e.sail_config}` : null,
+    ].filter(Boolean).join(' · ');
+    return `<div class="entry ${e.entry_type}" id="entry-${e.id}">
+      <div class="entry-header">
+        <span class="entry-type">${icon} ${escHtml(label)}</span>
+        <span class="entry-ts">${escHtml(ts)} UTC</span>
+        ${e.latitude ? `<span style="font-size:0.68rem;color:var(--text-dim)">${e.latitude.toFixed(2)}°N ${Math.abs(e.longitude).toFixed(2)}°O</span>` : ''}
+        <button class="entry-del" onclick="deleteEntry(${e.id})">✕</button>
+      </div>
+      <div class="entry-text">${escHtml(e.text || '')}</div>
+      ${meta ? `<div class="entry-meta">${escHtml(meta)}</div>` : ''}
+    </div>`;
+  }).join('');
+}
+
+async function addEntry() {
+  const text = document.getElementById('entry-text').value.trim();
+  if (!text) { document.getElementById('entry-text').focus(); return; }
+  const btn = document.getElementById('btn-add');
+  btn.disabled = true; btn.textContent = 'Enregistrement…';
+  const tsRaw = document.getElementById('entry-ts').value;
+  const body = {
+    text,
+    entry_type: document.getElementById('entry-type').value,
+    timestamp: tsRaw ? tsRaw.replace('T', ' ') : undefined,
+  };
+  try {
+    const resp = await fetch(`/api/logbook/${ROUTE_ID}`, {
+      method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body),
+    });
+    if (resp.ok) {
+      document.getElementById('entry-text').value = '';
+      document.getElementById('entry-ts').value = '';
+      await loadEntries();
+    }
+  } finally {
+    btn.disabled = false; btn.textContent = '✓ Enregistrer';
+  }
+}
+
+async function deleteEntry(id) {
+  if (!confirm('Supprimer cette entrée ?')) return;
+  await fetch(`/api/logbook/entry/${id}`, { method: 'DELETE' });
+  document.getElementById(`entry-${id}`)?.remove();
+}
+
+loadEntries();
+</script>
+{% endblock %}

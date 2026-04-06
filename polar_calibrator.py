@@ -93,6 +93,33 @@ def compute_twa(cog: float, twd: float) -> float:
     return angle if angle <= 180 else 360 - angle
 
 
+# ── Courants depuis passage_forecasts ──────────────────────────────────────────
+
+def get_current_from_db(lat: float, lon: float, dt: datetime, conn: sqlite3.Connection):
+    """
+    Cherche le courant le plus proche en temps et position dans passage_forecasts.
+    Retourne (current_speed_kts, current_dir_deg) ou (None, None).
+    """
+    dt_str = dt.strftime("%Y-%m-%dT%H:%M")
+    try:
+        row = conn.execute(
+            """SELECT current_speed_knots, current_direction_deg,
+                      ABS(julianday(forecast_time) - julianday(?)) as dt_diff,
+                      ((latitude - ?) * (latitude - ?) + (longitude - ?) * (longitude - ?)) as dist2
+               FROM passage_forecasts
+               WHERE current_speed_knots IS NOT NULL
+                 AND ABS(julianday(forecast_time) - julianday(?)) < 0.25
+               ORDER BY dt_diff + dist2 * 0.01 ASC
+               LIMIT 1""",
+            (dt_str, lat, lat, lon, lon, dt_str)
+        ).fetchone()
+        if row and row["current_speed_knots"] is not None:
+            return float(row["current_speed_knots"]), float(row["current_direction_deg"])
+    except Exception:
+        pass
+    return None, None
+
+
 # ── Open-Meteo ────────────────────────────────────────────────────────────────
 
 def fetch_wind_openmeteo(lat: float, lon: float, dt: datetime):
@@ -285,7 +312,18 @@ def run_calibration():
             continue
 
         twa = compute_twa(obs["cog"], twd)
-        stw = obs["sog_kts"]  # sans courant connu, STW ≈ SOG calculé
+
+        # Correction courant : STW = SOG - composante du courant dans l'axe du cap
+        current_speed_kts, current_dir_deg = get_current_from_db(
+            obs["lat"], obs["lon"], obs["mid_time"], db
+        )
+        if current_speed_kts and current_dir_deg is not None:
+            angle_rad = math.radians(current_dir_deg - obs["cog"])
+            along_track = current_speed_kts * math.cos(angle_rad)
+            stw = max(0.1, obs["sog_kts"] - along_track)
+        else:
+            stw = obs["sog_kts"]
+            current_speed_kts, current_dir_deg = None, None
 
         try:
             c.execute("""

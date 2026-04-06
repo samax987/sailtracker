@@ -1,0 +1,203 @@
+{% extends "base.html" %}
+{% block title %}Replay traversée{% endblock %}
+{% block content %}
+<link rel="stylesheet" href="/lib/leaflet.css" />
+<style>
+  :root { --bg:#0d1117; --bg2:#161b22; --bg3:#21262d; --border:rgba(48,54,61,0.8);
+          --accent:#4a9eff; --text:#e6edf3; --text-dim:#8b949e; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:var(--bg); color:var(--text); font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+         height:100vh; display:flex; flex-direction:column; }
+  header { background:var(--bg2); border-bottom:1px solid var(--border); padding:10px 16px;
+           display:flex; align-items:center; gap:12px; flex-wrap:wrap; flex-shrink:0; }
+  .btn { background:var(--bg3); border:1px solid var(--border); color:var(--text);
+         padding:5px 12px; border-radius:6px; cursor:pointer; font-size:0.8rem; text-decoration:none; }
+  .btn:hover { border-color:var(--accent); }
+  .btn.active { background:rgba(74,158,255,0.15); border-color:var(--accent); color:var(--accent); }
+  #map { flex:1; }
+  #controls { background:var(--bg2); border-top:1px solid var(--border); padding:10px 16px;
+              display:flex; align-items:center; gap:12px; flex-wrap:wrap; flex-shrink:0; }
+  #slider { flex:1; min-width:200px; accent-color:var(--accent); }
+  #ts-display { font-family:monospace; font-size:0.8rem; color:var(--accent); min-width:140px; }
+  .stat { display:flex; flex-direction:column; gap:1px; }
+  .stat .lbl { font-size:0.6rem; color:var(--text-dim); text-transform:uppercase; }
+  .stat .val { font-size:0.82rem; font-weight:600; }
+  #info-panel { position:absolute; top:60px; right:10px; z-index:1000; background:rgba(13,17,23,0.92);
+                border:1px solid var(--border); border-radius:8px; padding:10px 12px;
+                min-width:160px; font-size:0.78rem; pointer-events:none; }
+  .info-row { display:flex; justify-content:space-between; gap:12px; margin-bottom:4px; }
+  .info-row .lbl { color:var(--text-dim); }
+  .info-row .val { font-weight:600; }
+</style>
+
+<header>
+  <a href="/passage" class="btn">← Passage</a>
+  <span id="route-name" style="font-weight:700;color:#7ecfff">Chargement…</span>
+  <span id="stats-bar" style="font-size:0.78rem;color:var(--text-dim)"></span>
+  <div style="margin-left:auto;display:flex;gap:8px">
+    <button class="btn" id="btn-play" onclick="togglePlay()">▶ Play</button>
+    <button class="btn" onclick="setSpeed(1)" id="sp1">×1</button>
+    <button class="btn active" onclick="setSpeed(10)" id="sp10">×10</button>
+    <button class="btn" onclick="setSpeed(50)" id="sp50">×50</button>
+  </div>
+</header>
+
+<div style="position:relative;flex:1;display:flex;flex-direction:column">
+  <div id="map"></div>
+  <div id="info-panel">
+    <div class="info-row"><span class="lbl">Date</span><span class="val" id="inf-ts">—</span></div>
+    <div class="info-row"><span class="lbl">Vitesse</span><span class="val" id="inf-sog">—</span></div>
+    <div class="info-row"><span class="lbl">Cap</span><span class="val" id="inf-cog">—</span></div>
+    <div id="inf-log" style="margin-top:8px;font-style:italic;color:#fbbf24;font-size:0.72rem;display:none"></div>
+  </div>
+</div>
+
+<div id="controls">
+  <input type="range" id="slider" min="0" value="0" oninput="scrub(this.value)" />
+  <span id="ts-display">—</span>
+  <div class="stat"><span class="lbl">Distance</span><span class="val" id="c-dist">—</span></div>
+  <div class="stat"><span class="lbl">Progression</span><span class="val" id="c-pct">—</span></div>
+</div>
+
+<script src="/lib/leaflet.js"></script>
+<script>
+const ROUTE_ID = {{ route_id }};
+let track = [], waypoints = [], totalNm = 0;
+let map, boatMarker, traceLine, plannedLine, wpMarkers = [];
+let currentIdx = 0, playing = false, speedMult = 10, animTimer = null;
+
+const BOAT_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+  <polygon points="12,2 20,20 12,16 4,20" fill="#4a9eff" stroke="#fff" stroke-width="1.5"/>
+</svg>`;
+
+async function init() {
+  map = L.map('map', { zoomControl: true });
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap', maxZoom: 12,
+  }).addTo(map);
+
+  const resp = await fetch(`/api/replay/${ROUTE_ID}`);
+  const data = await resp.json();
+  if (data.error) { document.getElementById('route-name').textContent = data.error; return; }
+
+  track = data.track || [];
+  waypoints = data.route.waypoints || [];
+  totalNm = data.stats.total_nm || 0;
+
+  document.getElementById('route-name').textContent = data.route.name;
+  const dep = (data.actual_departure || '').slice(0, 10);
+  const arr = (data.actual_arrival || '').slice(0, 10);
+  document.getElementById('stats-bar').textContent =
+    `${dep} → ${arr} · ${totalNm} NM · moy. ${data.stats.avg_sog || '—'} kts`;
+
+  // Route planifiée (pointillé)
+  if (waypoints.length > 1) {
+    plannedLine = L.polyline(waypoints.map(w => [w.lat, w.lon]), {
+      color: '#4a9eff', weight: 1.5, opacity: 0.35, dashArray: '6 5'
+    }).addTo(map);
+    waypoints.forEach((w, i) => {
+      const isEnd = i === 0 || i === waypoints.length - 1;
+      L.circleMarker([w.lat, w.lon], {
+        radius: isEnd ? 6 : 4, fillColor: '#4a9eff', color: '#fff',
+        fillOpacity: 1, weight: 1.5,
+      }).bindTooltip(w.name || `WP${i+1}`, {direction:'top'}).addTo(map);
+    });
+  }
+
+  // Trace réelle (vide au départ, grandit à l'animation)
+  traceLine = L.polyline([], { color: '#4ade80', weight: 2.5, opacity: 0.85 }).addTo(map);
+
+  // Marqueur bateau
+  const boatIcon = L.divIcon({
+    className: '', html: BOAT_SVG, iconSize: [24, 24], iconAnchor: [12, 12],
+  });
+  boatMarker = L.marker([track[0]?.lat || 0, track[0]?.lon || 0], { icon: boatIcon }).addTo(map);
+
+  // Slider
+  document.getElementById('slider').max = track.length - 1;
+
+  // Centrer carte sur le track
+  if (track.length > 1) {
+    const lats = track.map(p => p.lat), lons = track.map(p => p.lon);
+    map.fitBounds([[Math.min(...lats), Math.min(...lons)], [Math.max(...lats), Math.max(...lons)]], { padding: [30, 30] });
+  }
+
+  render(0);
+}
+
+function render(idx) {
+  currentIdx = idx;
+  const p = track[idx];
+  if (!p) return;
+
+  // Mettre à jour bateau
+  boatMarker.setLatLng([p.lat, p.lon]);
+  const angle = p.cog || 0;
+  boatMarker.getElement()?.querySelector('svg')?.setAttribute('style', `transform:rotate(${angle}deg)`);
+
+  // Trace progressive
+  traceLine.setLatLngs(track.slice(0, idx + 1).map(pt => [pt.lat, pt.lon]));
+
+  // UI
+  const ts = (p.ts || '').slice(0, 16).replace('T', ' ');
+  document.getElementById('ts-display').textContent = ts + ' UTC';
+  document.getElementById('inf-ts').textContent = ts;
+  document.getElementById('inf-sog').textContent = p.sog ? p.sog.toFixed(1) + ' kts' : '—';
+  document.getElementById('inf-cog').textContent = p.cog ? Math.round(p.cog) + '°' : '—';
+  document.getElementById('slider').value = idx;
+
+  // Distance parcourue
+  let distDone = 0;
+  for (let i = 1; i <= idx && i < track.length; i++) {
+    const a = track[i-1], b = track[i];
+    const dlat = (b.lat - a.lat) * Math.PI / 180;
+    const dlon = (b.lon - a.lon) * Math.PI / 180;
+    const sinLat = Math.sin(dlat/2);
+    const sinLon = Math.sin(dlon/2);
+    const aa = sinLat*sinLat + Math.cos(a.lat*Math.PI/180)*Math.cos(b.lat*Math.PI/180)*sinLon*sinLon;
+    distDone += 3440.065 * 2 * Math.atan2(Math.sqrt(aa), Math.sqrt(1-aa));
+  }
+  document.getElementById('c-dist').textContent = Math.round(distDone) + ' NM';
+  document.getElementById('c-pct').textContent = totalNm > 0 ? Math.round(distDone/totalNm*100) + '%' : '—';
+
+  // Entrée logbook
+  const logEl = document.getElementById('inf-log');
+  if (p.logbook) {
+    logEl.textContent = '📓 ' + p.logbook.slice(0, 120);
+    logEl.style.display = '';
+  } else {
+    logEl.style.display = 'none';
+  }
+}
+
+function scrub(val) {
+  render(parseInt(val));
+}
+
+function togglePlay() {
+  playing = !playing;
+  document.getElementById('btn-play').textContent = playing ? '⏸ Pause' : '▶ Play';
+  if (playing) step();
+}
+
+function step() {
+  if (!playing) return;
+  if (currentIdx >= track.length - 1) {
+    playing = false;
+    document.getElementById('btn-play').textContent = '▶ Play';
+    return;
+  }
+  render(currentIdx + 1);
+  const interval = Math.max(50, 500 / speedMult);
+  animTimer = setTimeout(step, interval);
+}
+
+function setSpeed(x) {
+  speedMult = x;
+  document.querySelectorAll('[id^=sp]').forEach(b => b.classList.remove('active'));
+  document.getElementById('sp'+x)?.classList.add('active');
+}
+
+init();
+</script>
+{% endblock %}

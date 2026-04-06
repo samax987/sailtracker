@@ -296,23 +296,133 @@ def format_3day_forecast(days):
     return "\n".join(lines)
 
 
+def get_active_passage(conn):
+    """Retourne la route en phase 'active' si elle existe, sinon None."""
+    row = conn.execute(
+        "SELECT id, name, waypoints, actual_departure FROM passage_routes WHERE phase='active' ORDER BY actual_departure DESC LIMIT 1"
+    ).fetchone()
+    if not row:
+        return None
+    wps = json.loads(row["waypoints"])
+    pos = conn.execute(
+        "SELECT timestamp, latitude, longitude, speed_knots FROM positions WHERE source='inreach' ORDER BY timestamp DESC LIMIT 1"
+    ).fetchone()
+    if not pos:
+        return None
+
+    lat, lon = float(pos["latitude"]), float(pos["longitude"])
+    nearest_idx = min(range(len(wps)), key=lambda i: math.hypot(wps[i]["lat"]-lat, wps[i]["lon"]-lon))
+    total_dist = sum(math.sqrt((wps[i]["lat"]-wps[i-1]["lat"])**2 + (wps[i]["lon"]-wps[i-1]["lon"])**2)*60
+                     for i in range(1, len(wps)))
+    dist_done = sum(math.sqrt((wps[i]["lat"]-wps[i-1]["lat"])**2 + (wps[i]["lon"]-wps[i-1]["lon"])**2)*60
+                    for i in range(1, nearest_idx+1))
+    dist_remaining = total_dist - dist_done
+
+    # Distance 24h parcourue
+    positions_24h = conn.execute(
+        "SELECT latitude, longitude FROM positions WHERE source='inreach' AND timestamp >= datetime('now','-24 hours') ORDER BY timestamp ASC"
+    ).fetchall()
+    nm_24h = 0.0
+    for i in range(1, len(positions_24h)):
+        p1, p2 = positions_24h[i-1], positions_24h[i]
+        nm_24h += math.sqrt((p2["latitude"]-p1["latitude"])**2 + (p2["longitude"]-p1["longitude"])**2) * 60
+    vmg_24h = round(nm_24h / 24, 2) if nm_24h > 0 else None
+
+    # Jour de navigation
+    day_num = None
+    if row["actual_departure"]:
+        try:
+            dep = datetime.fromisoformat(row["actual_departure"].replace(" ", "T"))
+            if dep.tzinfo is None:
+                dep = dep.replace(tzinfo=timezone.utc)
+            day_num = (datetime.now(timezone.utc) - dep).days + 1
+        except Exception:
+            pass
+
+    # ETA
+    eta_str = None
+    avg_speed = float(pos["speed_knots"] or 0)
+    if vmg_24h and vmg_24h > 0:
+        avg_speed = vmg_24h
+    if avg_speed > 0 and dist_remaining > 0:
+        eta_dt = datetime.now(timezone.utc) + timedelta(hours=dist_remaining / avg_speed)
+        eta_str = eta_dt.strftime("%d/%m %Hh UTC")
+
+    # Dernière entrée logbook
+    last_log = conn.execute(
+        "SELECT text, timestamp FROM logbook_entries WHERE route_id=? ORDER BY timestamp DESC LIMIT 1",
+        (row["id"],)
+    ).fetchone()
+
+    return {
+        "route_id": row["id"],
+        "route_name": row["name"],
+        "lat": lat, "lon": lon,
+        "progress_pct": round(dist_done / total_dist * 100) if total_dist > 0 else 0,
+        "dist_remaining_nm": round(dist_remaining, 0),
+        "nm_24h": round(nm_24h, 0),
+        "vmg_24h": vmg_24h,
+        "day_num": day_num,
+        "eta": eta_str,
+        "avg_speed_knots": round(avg_speed, 1),
+        "last_log": dict(last_log) if last_log else None,
+    }
+
+
+def build_active_passage_message(status, wx, forecast_days=None):
+    wind_str = f"{wx['wind_knots']} kts {wind_dir_to_cardinal(wx['wind_dir'])} (rafales {wx['gusts_knots']} kts)" if wx else "—"
+    wave_str = f"{wx['wave_m']:.1f} m" if wx and wx['wave_m'] else "—"
+    swell_str = f"{wx['swell_m']:.1f} m" if wx and wx['swell_m'] else "—"
+    forecast_txt = format_3day_forecast(forecast_days) if forecast_days else "  Indisponible"
+    day_str = f" — Jour {status['day_num']}" if status['day_num'] else ""
+    nm24_str = f"📐 24h : <b>{status['nm_24h']} NM</b> ({status['vmg_24h']} kts moy.)\n" if status['nm_24h'] else ""
+    log_str = ""
+    if status.get("last_log"):
+        log_ts = status["last_log"]["timestamp"][:16].replace("T", " ")
+        log_str = f"\n📓 Journal ({log_ts}) : <i>{status['last_log']['text'][:200]}</i>\n"
+    return (
+        f"<b>⛵ POLLEN — Bulletin de bord{day_str} — {datetime.now(timezone.utc).strftime('%d/%m %Hh')} UTC</b>\n\n"
+        f"<b>Route :</b> {status['route_name']}\n"
+        f"📍 {status['lat']:.3f}°N {abs(status['lon']):.3f}°{'O' if status['lon'] < 0 else 'E'}\n\n"
+        f"📊 Progression : <b>{status['progress_pct']}%</b>\n"
+        f"📏 Restant : <b>{status['dist_remaining_nm']} NM</b>\n"
+        f"{nm24_str}"
+        f"⏱ ETA : <b>{status['eta'] or '—'}</b>\n"
+        f"🚤 VMG moyen : <b>{status['avg_speed_knots']} kts</b>\n"
+        f"{log_str}\n"
+        f"<b>🌊 Conditions :</b>\n"
+        f"  💨 {wind_str}\n"
+        f"  🌊 Vagues {wave_str} · Houle {swell_str}\n\n"
+        f"<b>📅 Prévisions 3 jours :</b>\n{forecast_txt}\n\n"
+        f"<a href='{SERVER_URL}/passage'>📊 Passage Planner</a> · "
+        f"<a href='{SERVER_URL}/logbook/{status[\"route_id\"]}'>📓 Journal</a>"
+    )
+
+
 def main():
     logger.info("=== Résumé Telegram quotidien ===")
 
     conn = sqlite3.connect(DB_PATH, timeout=10)
     conn.row_factory = sqlite3.Row
 
-    at_sea = get_at_sea_status(conn)
     wx = get_weather_summary(conn)
 
-    if at_sea:
-        logger.info("Mode EN MER détecté — route %s, %d%% fait", at_sea["route_name"], at_sea["progress_pct"])
-        forecast_days = get_3day_forecast(at_sea["lat"], at_sea["lon"])
-        msg = build_at_sea_message(at_sea, wx, forecast_days)
+    # Priorité : traversée active > mode en mer (vitesse) > pré-départ
+    active = get_active_passage(conn)
+    if active:
+        logger.info("Mode ACTIVE détecté — route %s, jour %s", active["route_name"], active.get("day_num"))
+        forecast_days = get_3day_forecast(active["lat"], active["lon"])
+        msg = build_active_passage_message(active, wx, forecast_days)
     else:
-        departure = get_departure_summary(conn)
-        logger.info("Mode PRÉ-DÉPART — meilleure fenêtre : %s", departure["departure_date"] if departure else "aucune")
-        msg = build_pre_departure_message(departure, wx)
+        at_sea = get_at_sea_status(conn)
+        if at_sea:
+            logger.info("Mode EN MER détecté — route %s, %d%% fait", at_sea["route_name"], at_sea["progress_pct"])
+            forecast_days = get_3day_forecast(at_sea["lat"], at_sea["lon"])
+            msg = build_at_sea_message(at_sea, wx, forecast_days)
+        else:
+            departure = get_departure_summary(conn)
+            logger.info("Mode PRÉ-DÉPART — meilleure fenêtre : %s", departure["departure_date"] if departure else "aucune")
+            msg = build_pre_departure_message(departure, wx)
 
     conn.close()
 
