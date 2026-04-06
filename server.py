@@ -34,12 +34,20 @@ GRIB_CACHE_DIR = STATIC_DIR / "grib_cache"
 FLASK_HOST = os.getenv("FLASK_HOST", "127.0.0.1")
 FLASK_PORT = int(os.getenv("FLASK_PORT", "8085"))
 
-# Zones de vérification (utilisées par forecast_verifier et model weighting)
+# Zones de vérification — dynamiques (local/near/regional/ocean) centrées sur la position InReach
+VERIF_ZONES_ORDERED = ['local', 'near', 'regional', 'ocean']
+VERIF_ZONE_LABELS = {
+    'local':    'Local',
+    'near':     '~150 nm',
+    'regional': '~400 nm',
+    'ocean':    '~800 nm',
+}
+# Conservé pour rétro-compatibilité avec d'autres modules
 VERIF_ZONES = {
-    'cabo_verde':     (16.9, -25.0),
-    'mid_atlantic':   (15.0, -40.0),
-    'caribbean_east': (13.5, -55.0),
-    'caribbean_west': (17.9, -62.8),
+    'local':    (17.9, -62.8),
+    'near':     (20.0, -62.8),
+    'regional': (22.5, -62.5),
+    'ocean':    (26.0, -61.5),
 }
 
 # =============================================================================
@@ -1789,16 +1797,58 @@ def accuracy_page():
             """SELECT model, zone, forecast_hour,
                       AVG(wind_speed_error_avg) as avg_err,
                       AVG(wind_dir_error_avg) as avg_dir_err,
+                      AVG(zone_lat) as avg_lat,
+                      AVG(zone_lon) as avg_lon,
                       COUNT(*) as n_days
                FROM model_accuracy
                WHERE date >= date('now', '-30 days')
+                 AND zone IN ('local','near','regional','ocean')
                GROUP BY model, zone, forecast_hour
                ORDER BY zone, forecast_hour, avg_err ASC"""
         ).fetchall()
 
-        zones = list(VERIF_ZONES.keys())
+        # Use ordered zone list; fall back to any zones present in data
+        zones_in_data = sorted(set(r["zone"] for r in acc_rows),
+                               key=lambda z: VERIF_ZONES_ORDERED.index(z)
+                               if z in VERIF_ZONES_ORDERED else 99)
+        zones = zones_in_data if zones_in_data else VERIF_ZONES_ORDERED
         horizons = [1, 2, 3, 5, 7]
         models = ['ecmwf_ifs025', 'gfs_seamless', 'icon_seamless']
+
+        # Zone center positions (average from stored zone_lat/zone_lon)
+        zone_positions = {}  # zone -> {lat, lon}
+        for r in acc_rows:
+            z = r["zone"]
+            if z not in zone_positions and r["avg_lat"] is not None:
+                zone_positions[z] = {
+                    "lat": round(r["avg_lat"], 2),
+                    "lon": round(r["avg_lon"], 2),
+                }
+
+        # Last InReach position for distance calculation
+        boat_row = conn.execute(
+            """SELECT latitude, longitude FROM positions
+               WHERE source='inreach' ORDER BY timestamp DESC LIMIT 1"""
+        ).fetchone()
+        boat_lat = float(boat_row["latitude"]) if boat_row else None
+        boat_lon = float(boat_row["longitude"]) if boat_row else None
+
+        # Distance from boat to each zone center
+        zone_distances = {}
+        if boat_lat is not None:
+            for z, pos in zone_positions.items():
+                d = haversine_nm(boat_lat, boat_lon, pos["lat"], pos["lon"])
+                zone_distances[z] = round(d)
+
+        # Human-readable zone labels with actual distance
+        zone_display = {}
+        for z in zones:
+            base = VERIF_ZONE_LABELS.get(z, z)
+            dist = zone_distances.get(z)
+            if dist is not None and z != 'local':
+                zone_display[z] = f"{base} ({dist} nm)"
+            else:
+                zone_display[z] = base
 
         # model_errors[zone][model][h] = {"speed": x, "dir": y}
         model_errors = {}
@@ -1940,6 +1990,11 @@ def accuracy_page():
             worst_score=worst_score,
             zone_best=zone_best,
             zone_mini_bars=zone_mini_bars,
+            zone_display=zone_display,
+            zone_positions=zone_positions,
+            zone_distances=zone_distances,
+            boat_lat=boat_lat,
+            boat_lon=boat_lon,
             comp_rows=comp_rows,
             chart_data=chart_data,
             chart_dir_data=chart_dir_data,

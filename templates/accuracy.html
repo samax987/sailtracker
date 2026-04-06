@@ -112,9 +112,14 @@
 {% if days_count < 7 %}
 <div class="banner">⏳ <strong>Accumulation en cours</strong> — {{ days_count }}/7 jours. Vérificateur actif chaque nuit à 06h UTC.</div>
 {% else %}
-<div class="banner">
-  ✅ <strong>{{ days_count }} jours</strong> de vérification sur 4 zones × 3 modèles × 5 horizons.
-  &nbsp;|&nbsp; Vert &lt; 3 kts &nbsp;·&nbsp; Orange &lt; 6 kts &nbsp;·&nbsp; Rouge ≥ 6 kts
+<div class="banner" style="justify-content:space-between">
+  <span>✅ <strong>{{ days_count }} jours</strong> de vérification · 4 cercles concentriques · 3 modèles · J+1→J+7.
+  &nbsp; Vert &lt; 3 kts · Orange &lt; 6 kts · Rouge ≥ 6 kts</span>
+  {% if boat_lat is not none %}
+  <span style="font-size:.75rem;color:var(--accent-info);font-family:monospace">
+    📍 {{ "%.2f"|format(boat_lat) }}°N {{ "%.2f"|format(boat_lon|abs) }}°W
+  </span>
+  {% endif %}
 </div>
 {% endif %}
 
@@ -139,13 +144,16 @@
 </div>
 
 {# ── Recommandations par zone ── #}
-<div class="stitle">Recommandation par zone <span style="font-weight:400;font-size:.68rem;color:var(--text-muted);text-transform:none;letter-spacing:0">barres = erreur J+1</span></div>
+<div class="stitle">Recommandation par zone <span style="font-weight:400;font-size:.68rem;color:var(--text-muted);text-transform:none;letter-spacing:0">cercles depuis position actuelle · barres = erreur J+1</span></div>
+{% set ZONE_ICONS = {'local':'📍','near':'〇','regional':'◎','ocean':'🌊'} %}
 <div class="zone-row">
 {% for z in zones %}
 {% set best = zone_best.get(z) %}
 {% set bars = zone_mini_bars.get(z, []) %}
+{% set pos = zone_positions.get(z) %}
 <div class="zone-card">
-  <div class="zc-name">{{ z.replace('_',' ').title() }}</div>
+  <div class="zc-name">{{ ZONE_ICONS.get(z,'·') }} {{ zone_display.get(z, z) }}</div>
+  {% if pos %}<div style="font-size:.62rem;color:var(--text-muted);margin-bottom:5px;font-family:monospace">{{ "%.1f"|format(pos.lat) }}°N {{ "%.1f"|format(pos.lon|abs) }}°W</div>{% endif %}
   {% if best %}
   {% set col = MC[best.model] %}
   <div class="zc-model" style="color:{{ col }}">{{ ML[best.model] }}</div>
@@ -191,7 +199,7 @@
   {% for row in comp_rows %}
   <tr>
     {% if row.first_for_zone %}
-    <td class="zone-lbl" rowspan="{{ row.zone_rowspan }}">{{ row.zone.replace('_',' ').title() }}</td>
+    <td class="zone-lbl" rowspan="{{ row.zone_rowspan }}">{{ zone_display.get(row.zone, row.zone) }}</td>
     {% endif %}
     <td class="h-lbl">J+{{ row.horizon }}</td>
     {% for m in ['ecmwf_ifs025','gfs_seamless','icon_seamless'] %}
@@ -235,7 +243,7 @@
 <div class="charts-2">
 {% for z in zones %}
 <div class="chart-card">
-  <div class="ct">{{ z.replace('_',' ').title() }}</div>
+  <div class="ct">{{ zone_display.get(z, z) }}</div>
   <div class="chart-h"><canvas id="chart-{{ z }}"></canvas></div>
 </div>
 {% endfor %}
