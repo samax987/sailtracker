@@ -109,6 +109,22 @@
     .fc-dir  { font-size: .6rem; color: var(--muted); margin-top: 2px; }
     .fc-delta { font-size: .6rem; margin-top: 2px; }
 
+    /* ── Voiles ── */
+    .sail-current { display:flex; align-items:center; gap:10px; margin-bottom:12px; }
+    .sail-badge { font-size:.85rem; font-weight:700; padding:6px 14px; border-radius:20px;
+      background:rgba(45,222,130,.12); border:1px solid rgba(45,222,130,.35); color:#2dde82; }
+    .sail-badge.reduced { background:rgba(251,191,36,.1); border-color:rgba(251,191,36,.35); color:#ffbb33; }
+    .sail-badge.spi { background:rgba(167,139,250,.12); border-color:rgba(167,139,250,.4); color:#c4b5fd; }
+    .sail-badge.none { background:var(--dim); border-color:var(--border); color:var(--muted); }
+    .sail-presets { display:grid; grid-template-columns:repeat(3,1fr); gap:7px; }
+    .sail-preset { background:var(--dim); border:1px solid var(--border); color:var(--txt);
+      border-radius:9px; padding:11px 6px; font-size:.78rem; font-weight:600; cursor:pointer;
+      text-align:center; line-height:1.3; transition:all .15s; -webkit-tap-highlight-color:transparent; }
+    .sail-preset:active { background:rgba(59,158,255,.2); border-color:var(--accent); }
+    .sail-preset.current { background:rgba(45,222,130,.1); border-color:rgba(45,222,130,.4); color:#2dde82; }
+    .sail-preset.current.is-spi { background:rgba(167,139,250,.12); border-color:rgba(167,139,250,.4); color:#c4b5fd; }
+    .sail-preset.current.is-reduced { background:rgba(251,191,36,.1); border-color:rgba(251,191,36,.35); color:#ffbb33; }
+
     /* ── Logbook quick ── */
     #log-btn { width: 100%; background: rgba(59,158,255,.1); border: 1px solid rgba(59,158,255,.35);
       color: var(--accent); border-radius: 10px; padding: 14px; font-size: .88rem; font-weight: 600;
@@ -236,6 +252,23 @@
     </div>
   </div>
 
+  <!-- ── Configuration voiles ── -->
+  <div class="card">
+    <div class="stitle">Configuration voiles</div>
+    <div class="sail-current">
+      <div class="sail-badge none" id="sail-current-badge">—</div>
+      <span style="font-size:.68rem;color:var(--muted)" id="sail-current-since"></span>
+    </div>
+    <div class="sail-presets">
+      <button class="sail-preset" data-reef="0" data-genoa="100" data-spi="0" onclick="quickSail(this)">⛵<br>Plein voile</button>
+      <button class="sail-preset" data-reef="1" data-genoa="100" data-spi="0" onclick="quickSail(this)">1️⃣<br>1 ris</button>
+      <button class="sail-preset" data-reef="2" data-genoa="80"  data-spi="0" onclick="quickSail(this)">2️⃣<br>2 ris</button>
+      <button class="sail-preset" data-reef="3" data-genoa="50"  data-spi="0" onclick="quickSail(this)">3️⃣<br>3 ris</button>
+      <button class="sail-preset" data-reef="4" data-genoa="30"  data-spi="0" onclick="quickSail(this)">4️⃣<br>4 ris</button>
+      <button class="sail-preset" data-reef="0" data-genoa="100" data-spi="1" onclick="quickSail(this)">🪁<br>Spinnaker</button>
+    </div>
+  </div>
+
   <!-- ── Route / WP ── -->
   <div class="card" id="route-card">
     <div class="stitle">Route active</div>
@@ -334,6 +367,68 @@ function windArrow(twd) {
   return arrows[Math.round(((twd + 22.5) % 360) / 45) % 8];
 }
 
+// ── Sail config ───────────────────────────────────────────────────────────
+function renderSailConfig(sc) {
+  const badge = document.getElementById('sail-current-badge');
+  const since = document.getElementById('sail-current-since');
+
+  if (!sc) {
+    badge.textContent = 'Non définie';
+    badge.className = 'sail-badge none';
+    since.textContent = '';
+    document.querySelectorAll('.sail-preset').forEach(b => b.classList.remove('current','is-spi','is-reduced'));
+    return;
+  }
+
+  badge.textContent = sc.description || 'Inconnue';
+  const isFullSail = sc.reef_count === 0 && sc.genoa_pct >= 90 && !sc.spinnaker;
+  badge.className = 'sail-badge' + (sc.spinnaker ? ' spi' : isFullSail ? '' : ' reduced');
+
+  // Highlight matching preset
+  document.querySelectorAll('.sail-preset').forEach(btn => {
+    const r = parseInt(btn.dataset.reef);
+    const g = parseInt(btn.dataset.genoa);
+    const s = parseInt(btn.dataset.spi);
+    const match = (r === sc.reef_count && s === (sc.spinnaker ? 1 : 0)
+      && (s === 1 || Math.abs(g - sc.genoa_pct) < 15));
+    btn.classList.toggle('current', match);
+    btn.classList.toggle('is-spi', match && !!sc.spinnaker);
+    btn.classList.toggle('is-reduced', match && !isFullSail && !sc.spinnaker);
+  });
+}
+
+async function quickSail(btn) {
+  const reef = parseInt(btn.dataset.reef);
+  const genoa = parseInt(btn.dataset.genoa);
+  const spi = parseInt(btn.dataset.spi);
+
+  // Confirmation si réduction significative
+  const label = btn.textContent.trim().replace('\n',' ');
+  if (!confirm(`Changer la config voiles :\n→ ${label} ?`)) return;
+
+  btn.style.opacity = '.5';
+  try {
+    const r = await fetch('/api/sail-configs/quick-change', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        reef_count: reef, genoa_pct: genoa, spinnaker: spi,
+        route_id: activeRouteId,
+      }),
+    });
+    const d = await r.json();
+    if (r.ok) {
+      await refresh();
+    } else {
+      alert('Erreur : ' + (d.error || 'inconnue'));
+    }
+  } catch(e) {
+    alert('Erreur réseau : ' + e.message);
+  } finally {
+    btn.style.opacity = '';
+  }
+}
+
 // ── Render ────────────────────────────────────────────────────────────────
 function render(d) {
   data = d;
@@ -342,6 +437,8 @@ function render(d) {
   const polar = d.polar || {};
   const route = d.route;
   const fc = d.forecast_12h || [];
+
+  renderSailConfig(d.sail_config || null);
 
   // SOG
   const sogEl = document.getElementById('sog');

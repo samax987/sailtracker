@@ -2601,6 +2601,94 @@ def api_sail_configs_stats():
         conn.close()
 
 
+@app.route("/api/sail-configs/active")
+def api_sail_configs_active():
+    """Config voile actuellement active (timestamp_end IS NULL ou > now)."""
+    conn = get_db()
+    try:
+        row = conn.execute(
+            """SELECT id, timestamp_start, timestamp_end,
+                      reef_count, genoa_pct, spinnaker, description
+               FROM sail_config_periods
+               WHERE timestamp_end IS NULL
+                  OR timestamp_end >= datetime('now')
+               ORDER BY timestamp_start DESC LIMIT 1"""
+        ).fetchone()
+        if row:
+            return jsonify({"active": dict(row)})
+        return jsonify({"active": None})
+    finally:
+        conn.close()
+
+
+@app.route("/api/sail-configs/quick-change", methods=["POST"])
+def api_sail_configs_quick_change():
+    """
+    Changement rapide de config voile depuis le dashboard de quart.
+    1. Ferme la config active (timestamp_end = now)
+    2. Ouvre la nouvelle config (timestamp_start = now)
+    3. Crée automatiquement une entrée logbook sail_change
+    """
+    data = request.get_json() or {}
+    reef     = max(0, min(4, int(data.get("reef_count", 0))))
+    genoa    = max(0, min(100, int(data.get("genoa_pct", 100))))
+    spinnaker = 1 if data.get("spinnaker") else 0
+    route_id  = data.get("route_id")
+
+    # Libellé automatique
+    parts = []
+    if spinnaker:
+        label = "🪁 Spinnaker"
+    else:
+        if reef > 0: parts.append(f"{reef} ris")
+        if genoa < 100: parts.append(f"génois {genoa}%")
+        label = "Plein voile" if not parts else " + ".join(parts)
+
+    conn = get_db()
+    try:
+        now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+        # Récupère la config précédente pour le logbook
+        prev = conn.execute(
+            """SELECT description FROM sail_config_periods
+               WHERE timestamp_end IS NULL ORDER BY timestamp_start DESC LIMIT 1"""
+        ).fetchone()
+        prev_label = prev["description"] if prev else "inconnue"
+
+        # Ferme toutes les configs ouvertes
+        conn.execute(
+            "UPDATE sail_config_periods SET timestamp_end=? WHERE timestamp_end IS NULL",
+            (now_str,)
+        )
+
+        # Crée la nouvelle config
+        cur = conn.execute(
+            """INSERT INTO sail_config_periods
+               (timestamp_start, reef_count, genoa_pct, spinnaker, description)
+               VALUES (?,?,?,?,?)""",
+            (now_str, reef, genoa, spinnaker, label)
+        )
+        config_id = cur.lastrowid
+
+        # Entrée logbook automatique
+        log_content = f"{prev_label} → {label}"
+        if route_id:
+            try:
+                conn.execute(
+                    """INSERT INTO logbook_entries
+                       (route_id, entry_time, entry_type, content)
+                       VALUES (?,?,?,?)""",
+                    (route_id, now_str, "sail_change", log_content)
+                )
+            except Exception:
+                pass
+
+        conn.commit()
+        return jsonify({"id": config_id, "description": label, "log": log_content}), 201
+    finally:
+        conn.close()
+
+
 # =============================================================================
 # Dashboard de quart
 # =============================================================================
@@ -2824,6 +2912,21 @@ def api_quart():
                     "eta": eta_str,
                 }
 
+        # ── Config voile active ───────────────────────────────────────────────
+        sail_config = None
+        try:
+            sc_row = conn.execute(
+                """SELECT id, reef_count, genoa_pct, spinnaker, description
+                   FROM sail_config_periods
+                   WHERE timestamp_end IS NULL
+                      OR timestamp_end >= datetime('now')
+                   ORDER BY timestamp_start DESC LIMIT 1"""
+            ).fetchone()
+            if sc_row:
+                sail_config = dict(sc_row)
+        except Exception:
+            pass
+
         # ── Logbook récent ────────────────────────────────────────────────────
         recent_logs = []
         try:
@@ -2863,6 +2966,7 @@ def api_quart():
             },
             "route": route_info,
             "forecast_12h": wind_data.get("forecast_12h", []),
+            "sail_config": sail_config,
             "logbook": recent_logs,
         })
     finally:
