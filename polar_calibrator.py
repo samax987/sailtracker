@@ -93,6 +93,24 @@ def compute_twa(cog: float, twd: float) -> float:
     return angle if angle <= 180 else 360 - angle
 
 
+# ── Config voile active ────────────────────────────────────────────────────────
+
+def get_sail_config_id(dt: datetime, conn: sqlite3.Connection):
+    """Retourne l'id de la config voile active au moment dt, ou None si inconnue."""
+    dt_str = dt.strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        row = conn.execute(
+            """SELECT id FROM sail_config_periods
+               WHERE timestamp_start <= ?
+                 AND (timestamp_end IS NULL OR timestamp_end >= ?)
+               ORDER BY timestamp_start DESC LIMIT 1""",
+            (dt_str, dt_str)
+        ).fetchone()
+        return row["id"] if row else None
+    except Exception:
+        return None
+
+
 # ── Courants depuis passage_forecasts ──────────────────────────────────────────
 
 def get_current_from_db(lat: float, lon: float, dt: datetime, conn: sqlite3.Connection):
@@ -325,6 +343,8 @@ def run_calibration():
             stw = obs["sog_kts"]
             current_speed_kts, current_dir_deg = None, None
 
+        sail_cfg_id = get_sail_config_id(obs["mid_time"], db)
+
         try:
             c.execute("""
                 INSERT OR IGNORE INTO polar_observations
@@ -332,15 +352,15 @@ def run_calibration():
                      sog_kts, cog_deg,
                      tws_kts, twd_deg, twa_deg,
                      current_speed_kts, current_dir_deg,
-                     stw_kts, is_valid)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+                     stw_kts, sail_config_id, is_valid)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
             """, (
                 obs["timestamp"],
                 round(obs["lat"], 5), round(obs["lon"], 5),
                 obs["sog_kts"], obs["cog"],
                 round(tws_kts, 2), round(twd, 1), round(twa, 1),
-                None, None,
-                round(stw, 3),
+                current_speed_kts, current_dir_deg,
+                round(stw, 3), sail_cfg_id,
             ))
             if c.rowcount > 0:
                 inserted += 1

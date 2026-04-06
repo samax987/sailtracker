@@ -162,23 +162,41 @@ class PolarDiagram:
         return self._tws_arr.tolist()
 
 
-def update_polars_from_observations(db, polar: PolarDiagram, min_obs: int = 5) -> int:
+def update_polars_from_observations(db, polar: PolarDiagram, min_obs: int = 5,
+                                    full_sail_only: bool = True) -> int:
     """
     Calibre les polaires en blendant les observations réelles.
+    full_sail_only=True (défaut) : n'utilise que les observations sans réduction de voile
+    (reef_count=0 ET genoa_pct>=90) pour la polaire de référence.
     Retourne le nombre de cases mises à jour.
     Écrit les cases calibrées dans polar_matrix (source de vérité).
     """
     c = db.cursor()
 
-    # Récupère toutes les observations valides
+    # Filtre full sail : observations sans config, ou config plein voile
+    full_sail_filter = ""
+    if full_sail_only:
+        full_sail_filter = """
+              AND (po.sail_config_id IS NULL
+                   OR EXISTS (
+                       SELECT 1 FROM sail_config_periods sc
+                       WHERE sc.id = po.sail_config_id
+                         AND sc.reef_count = 0
+                         AND sc.genoa_pct >= 90
+                         AND sc.spinnaker = 0
+                   ))
+        """
+
+    # Récupère les observations valides (plein voile uniquement si demandé)
     try:
-        rows = c.execute("""
-            SELECT twa_deg, tws_kts, stw_kts
-            FROM polar_observations
-            WHERE is_valid = 1
-              AND twa_deg IS NOT NULL
-              AND tws_kts IS NOT NULL
-              AND stw_kts IS NOT NULL
+        rows = c.execute(f"""
+            SELECT po.twa_deg, po.tws_kts, po.stw_kts
+            FROM polar_observations po
+            WHERE po.is_valid = 1
+              AND po.twa_deg IS NOT NULL
+              AND po.tws_kts IS NOT NULL
+              AND po.stw_kts IS NOT NULL
+              {full_sail_filter}
         """).fetchall()
     except Exception as e:
         logger.warning("polar_observations table not ready: %s", e)
@@ -226,7 +244,8 @@ def update_polars_from_observations(db, polar: PolarDiagram, min_obs: int = 5) -
     if updated > 0:
         db.commit()
         polar.save()  # CSV backup/export seulement
-        logger.info("Polaires calibrées : %d cases mises à jour", updated)
+        mode = "plein voile uniquement" if full_sail_only else "toutes configs"
+        logger.info("Polaires calibrées (%s) : %d cases sur %d observations", mode, updated, len(rows))
 
     return updated
 

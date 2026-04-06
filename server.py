@@ -2345,6 +2345,107 @@ def replay_page(route_id):
 
 
 # =============================================================================
+# API : Configurations de voiles (sail_config_periods)
+# =============================================================================
+
+@app.route("/api/sail-configs", methods=["GET"])
+def api_sail_configs_list():
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM sail_config_periods ORDER BY timestamp_start DESC"
+        ).fetchall()
+        return jsonify({"configs": [dict(r) for r in rows]})
+    finally:
+        conn.close()
+
+
+@app.route("/api/sail-configs", methods=["POST"])
+def api_sail_configs_add():
+    data = request.get_json() or {}
+    conn = get_db()
+    try:
+        ts_start = data.get("timestamp_start", "")
+        if not ts_start:
+            return jsonify({"error": "timestamp_start requis"}), 400
+        reef = max(0, min(4, int(data.get("reef_count", 0))))
+        genoa = max(0, min(100, int(data.get("genoa_pct", 100))))
+        spinnaker = 1 if data.get("spinnaker") else 0
+        ts_end = data.get("timestamp_end") or None
+        desc = data.get("description", "")[:200]
+        if not desc:
+            parts = []
+            if reef > 0: parts.append(f"{reef} ris")
+            if genoa < 100: parts.append(f"génois {genoa}%")
+            if spinnaker: parts.append("spi")
+            desc = ("Plein voile" if not parts else " + ".join(parts))
+        cur = conn.execute(
+            """INSERT INTO sail_config_periods
+               (timestamp_start, timestamp_end, reef_count, genoa_pct, spinnaker, description)
+               VALUES (?,?,?,?,?,?)""",
+            (ts_start, ts_end, reef, genoa, spinnaker, desc)
+        )
+        config_id = cur.lastrowid
+
+        # Tagger les observations polar existantes dans cette période
+        q = "UPDATE polar_observations SET sail_config_id=? WHERE sail_config_id IS NULL AND timestamp >= ?"
+        params = [config_id, ts_start]
+        if ts_end:
+            q += " AND timestamp <= ?"
+            params.append(ts_end)
+        tagged = conn.execute(q, params).rowcount
+        conn.commit()
+        return jsonify({"id": config_id, "description": desc, "tagged_obs": tagged}), 201
+    finally:
+        conn.close()
+
+
+@app.route("/api/sail-configs/<int:config_id>", methods=["DELETE"])
+def api_sail_configs_delete(config_id):
+    conn = get_db()
+    try:
+        if not conn.execute("SELECT id FROM sail_config_periods WHERE id=?", (config_id,)).fetchone():
+            return jsonify({"error": "Config non trouvée"}), 404
+        conn.execute("UPDATE polar_observations SET sail_config_id=NULL WHERE sail_config_id=?", (config_id,))
+        conn.execute("DELETE FROM sail_config_periods WHERE id=?", (config_id,))
+        conn.commit()
+        return jsonify({"success": True})
+    finally:
+        conn.close()
+
+
+@app.route("/api/sail-configs/stats")
+def api_sail_configs_stats():
+    """Stats sur les observations par config — pour savoir ce qui alimente les polaires."""
+    conn = get_db()
+    try:
+        total = conn.execute("SELECT COUNT(*) FROM polar_observations WHERE is_valid=1").fetchone()[0]
+        full_sail = conn.execute(
+            """SELECT COUNT(*) FROM polar_observations po
+               LEFT JOIN sail_config_periods sc ON po.sail_config_id = sc.id
+               WHERE po.is_valid=1
+                 AND (po.sail_config_id IS NULL
+                      OR (sc.reef_count=0 AND sc.genoa_pct >= 90 AND sc.spinnaker=0))"""
+        ).fetchone()[0]
+        reduced = total - full_sail
+        by_config = conn.execute(
+            """SELECT sc.description, sc.reef_count, sc.genoa_pct, sc.spinnaker,
+                      COUNT(po.id) as n_obs
+               FROM sail_config_periods sc
+               LEFT JOIN polar_observations po ON po.sail_config_id = sc.id AND po.is_valid=1
+               GROUP BY sc.id ORDER BY sc.timestamp_start DESC"""
+        ).fetchall()
+        return jsonify({
+            "total_obs": total,
+            "full_sail_obs": full_sail,
+            "reduced_sail_obs": reduced,
+            "by_config": [dict(r) for r in by_config],
+        })
+    finally:
+        conn.close()
+
+
+# =============================================================================
 # Init DB
 # =============================================================================
 
@@ -2475,6 +2576,18 @@ def init_db():
             FOREIGN KEY (route_id) REFERENCES passage_routes(id)
         );
         CREATE INDEX IF NOT EXISTS idx_logbook ON logbook_entries(route_id, timestamp DESC);
+
+        CREATE TABLE IF NOT EXISTS sail_config_periods (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp_start TEXT NOT NULL,
+            timestamp_end   TEXT,
+            reef_count      INTEGER NOT NULL DEFAULT 0,
+            genoa_pct       INTEGER NOT NULL DEFAULT 100,
+            spinnaker       INTEGER NOT NULL DEFAULT 0,
+            description     TEXT,
+            created_at      TEXT DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_sail_cfg ON sail_config_periods(timestamp_start);
     """)
     # Migrations
     for col, definition in [("status", "TEXT DEFAULT 'ready'"), ("last_computed", "TEXT"), ("source", "TEXT DEFAULT 'ais'")]:
@@ -2496,6 +2609,10 @@ def init_db():
             c.execute(f"ALTER TABLE passage_routes ADD COLUMN {col} {definition}")
         except Exception:
             pass
+    try:
+        c.execute("ALTER TABLE polar_observations ADD COLUMN sail_config_id INTEGER")
+    except Exception:
+        pass
     conn.commit()
     conn.close()
 

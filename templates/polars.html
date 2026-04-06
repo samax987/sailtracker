@@ -143,6 +143,66 @@
   </div>
 </div>
 
+<!-- ── Section configs voiles ── -->
+<div class="page-wrap" style="margin-top:0;padding-top:0">
+<div class="card" style="margin:0 0 24px">
+  <div class="card-header" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+    <span style="font-weight:700;color:#7dd3fc">⛵ Configurations de voiles</span>
+    <span style="font-size:0.75rem;color:var(--text-muted)" id="sail-stats-txt"></span>
+    <span style="margin-left:auto;font-size:0.72rem;color:var(--text-muted)">
+      La calibration n'utilise que les observations <b>plein voile</b> (0 ris, génois ≥ 90%)
+    </span>
+  </div>
+  <div style="padding:14px 16px">
+    <!-- Formulaire ajout -->
+    <div style="background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:8px;padding:14px;margin-bottom:16px">
+      <div style="font-size:0.78rem;font-weight:600;color:var(--text-primary);margin-bottom:10px">+ Enregistrer une période de navigation réduite</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;margin-bottom:10px">
+        <div>
+          <label style="font-size:0.65rem;color:var(--text-muted);display:block;margin-bottom:3px">DÉBUT (UTC)</label>
+          <input type="datetime-local" id="sc-start" style="width:100%;background:var(--bg-tertiary);border:1px solid var(--border-color);color:var(--text-primary);padding:6px 8px;border-radius:6px;font-size:0.8rem">
+        </div>
+        <div>
+          <label style="font-size:0.65rem;color:var(--text-muted);display:block;margin-bottom:3px">FIN (UTC, optionnel)</label>
+          <input type="datetime-local" id="sc-end" style="width:100%;background:var(--bg-tertiary);border:1px solid var(--border-color);color:var(--text-primary);padding:6px 8px;border-radius:6px;font-size:0.8rem">
+        </div>
+        <div>
+          <label style="font-size:0.65rem;color:var(--text-muted);display:block;margin-bottom:3px">RIS (0 = plein)</label>
+          <div style="display:flex;align-items:center;gap:8px">
+            <input type="range" id="sc-reef" min="0" max="4" value="0" style="flex:1;accent-color:#4a9eff" oninput="updateSailPreview()">
+            <span id="sc-reef-val" style="font-weight:700;color:#4a9eff;min-width:16px">0</span>
+          </div>
+        </div>
+        <div>
+          <label style="font-size:0.65rem;color:var(--text-muted);display:block;margin-bottom:3px">GÉNOIS %</label>
+          <div style="display:flex;align-items:center;gap:8px">
+            <input type="range" id="sc-genoa" min="0" max="100" value="100" step="5" style="flex:1;accent-color:#4ade80" oninput="updateSailPreview()">
+            <span id="sc-genoa-val" style="font-weight:700;color:#4ade80;min-width:30px">100%</span>
+          </div>
+        </div>
+        <div style="display:flex;align-items:flex-end;gap:8px">
+          <label style="display:flex;align-items:center;gap:6px;font-size:0.78rem;cursor:pointer;padding-bottom:4px">
+            <input type="checkbox" id="sc-spi" style="accent-color:#fbbf24"> 🪁 Spinnaker
+          </label>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <span id="sail-preview" style="font-size:0.82rem;color:#e2e8f0;background:rgba(255,255,255,0.06);padding:4px 10px;border-radius:6px">Plein voile</span>
+        <button onclick="addSailConfig()" style="background:rgba(74,158,255,0.12);border:1px solid rgba(74,158,255,0.4);color:#4a9eff;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:0.82rem">
+          ✓ Enregistrer
+        </button>
+        <span id="sc-status" style="font-size:0.72rem;color:var(--text-muted)"></span>
+      </div>
+    </div>
+
+    <!-- Timeline des configs -->
+    <div id="sail-configs-list">
+      <div style="color:var(--text-muted);font-size:0.78rem;padding:8px">Chargement…</div>
+    </div>
+  </div>
+</div>
+</div>
+
 <div id="toast"></div>
 
 <script>
@@ -164,6 +224,8 @@ async function init() {
   await loadPolars();
   await loadStats();
   updateCalc();
+  loadSailConfigs();
+  loadSailStats();
 }
 
 async function loadPolars() {
@@ -487,6 +549,151 @@ function showToast(msg, ok) {
   t.className = ok ? 'ok' : 'err';
   t.style.display = 'block';
   setTimeout(() => t.style.display = 'none', 3000);
+}
+
+// =============================================================================
+// Sail configs
+// =============================================================================
+
+function updateSailPreview() {
+  const reef = parseInt(document.getElementById('sc-reef').value);
+  const genoa = parseInt(document.getElementById('sc-genoa').value);
+  const spi = document.getElementById('sc-spi').checked;
+  document.getElementById('sc-reef-val').textContent = reef;
+  document.getElementById('sc-genoa-val').textContent = genoa + '%';
+
+  let parts = [];
+  if (spi) {
+    parts.push('🪁 Spinnaker');
+  } else {
+    if (reef === 0 && genoa >= 90) {
+      parts.push('Plein voile');
+    } else {
+      if (reef > 0) parts.push(reef === 1 ? '1 ris' : reef + ' ris');
+      if (genoa < 100) parts.push('génois ' + genoa + '%');
+      if (genoa === 0) parts = [reef > 0 ? (reef + ' ris — sans génois') : 'Sans génois'];
+    }
+  }
+  document.getElementById('sail-preview').textContent = parts.join(' + ') || 'Plein voile';
+}
+
+async function loadSailConfigs() {
+  try {
+    const r = await fetch('/api/sail-configs');
+    const data = await r.json();
+    const list = document.getElementById('sail-configs-list');
+    if (!data.configs || data.configs.length === 0) {
+      list.innerHTML = '<div style="color:var(--text-muted);font-size:0.78rem;padding:8px">Aucune configuration enregistrée — toutes les observations sont considérées plein voile.</div>';
+      return;
+    }
+    list.innerHTML = data.configs.map(cfg => {
+      const reef = cfg.reef_count || 0;
+      const genoa = cfg.genoa_pct != null ? cfg.genoa_pct : 100;
+      const spi = cfg.spinnaker ? '🪁 Spinnaker' : null;
+      let label;
+      if (spi) {
+        label = spi;
+      } else if (reef === 0 && genoa >= 90) {
+        label = 'Plein voile';
+      } else {
+        let p = [];
+        if (reef > 0) p.push(reef === 1 ? '1 ris' : reef + ' ris');
+        if (genoa < 100) p.push('génois ' + genoa + '%');
+        label = p.join(' + ') || 'Plein voile';
+      }
+      const start = (cfg.timestamp_start || '').slice(0, 16).replace('T', ' ');
+      const end = cfg.timestamp_end ? (cfg.timestamp_end || '').slice(0, 16).replace('T', ' ') : '—';
+      const nObs = cfg.n_obs != null ? cfg.n_obs + ' obs' : '';
+      const isFullSail = reef === 0 && genoa >= 90 && !cfg.spinnaker;
+      const tagColor = isFullSail ? '#4ade80' : '#fbbf24';
+      const tagLabel = isFullSail ? 'plein voile' : 'réduit';
+      return `<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:7px;background:var(--bg-secondary);border:1px solid var(--border-color);margin-bottom:6px;flex-wrap:wrap">
+        <span style="font-size:0.75rem;font-weight:700;background:rgba(255,255,255,0.06);padding:3px 8px;border-radius:4px;color:${tagColor};border:1px solid ${tagColor}40">${tagLabel}</span>
+        <span style="font-weight:600;font-size:0.82rem">${label}</span>
+        <span style="color:var(--text-muted);font-size:0.75rem;font-family:monospace">${start} → ${end}</span>
+        ${nObs ? `<span style="color:var(--text-muted);font-size:0.72rem">(${nObs} taggées)</span>` : ''}
+        <button onclick="deleteSailConfig(${cfg.id})" style="margin-left:auto;background:rgba(248,113,113,0.1);border:1px solid rgba(248,113,113,0.3);color:#f87171;padding:3px 9px;border-radius:5px;cursor:pointer;font-size:0.72rem">Supprimer</button>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    document.getElementById('sail-configs-list').innerHTML = '<div style="color:#f87171;font-size:0.78rem;padding:8px">Erreur chargement configs: ' + e.message + '</div>';
+  }
+}
+
+async function loadSailStats() {
+  try {
+    const r = await fetch('/api/sail-configs/stats');
+    const d = await r.json();
+    const el = document.getElementById('sail-stats-txt');
+    if (d.total != null) {
+      el.textContent = `${d.total} configs · ${d.tagged_obs || 0} obs taggées · ${d.full_sail_obs || 0} plein voile`;
+    }
+  } catch(e) {}
+}
+
+async function addSailConfig() {
+  const start = document.getElementById('sc-start').value;
+  if (!start) { showToast('Date de début requise', false); return; }
+  const end = document.getElementById('sc-end').value || null;
+  const reef = parseInt(document.getElementById('sc-reef').value);
+  const genoa = parseInt(document.getElementById('sc-genoa').value);
+  const spi = document.getElementById('sc-spi').checked ? 1 : 0;
+
+  const btn = document.querySelector('[onclick="addSailConfig()"]');
+  btn.disabled = true;
+  document.getElementById('sc-status').textContent = 'Enregistrement…';
+
+  try {
+    const r = await fetch('/api/sail-configs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        timestamp_start: start.replace('T', ' '),
+        timestamp_end: end ? end.replace('T', ' ') : null,
+        reef_count: reef,
+        genoa_pct: genoa,
+        spinnaker: spi,
+      })
+    });
+    const d = await r.json();
+    if (r.ok) {
+      showToast('Config enregistrée (' + (d.tagged || 0) + ' obs taggées)', true);
+      document.getElementById('sc-status').textContent = '';
+      document.getElementById('sc-start').value = '';
+      document.getElementById('sc-end').value = '';
+      document.getElementById('sc-reef').value = 0;
+      document.getElementById('sc-genoa').value = 100;
+      document.getElementById('sc-spi').checked = false;
+      updateSailPreview();
+      await loadSailConfigs();
+      await loadSailStats();
+    } else {
+      showToast(d.error || 'Erreur', false);
+      document.getElementById('sc-status').textContent = '';
+    }
+  } catch(e) {
+    showToast('Erreur réseau: ' + e.message, false);
+    document.getElementById('sc-status').textContent = '';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function deleteSailConfig(id) {
+  if (!confirm('Supprimer cette configuration ? Les observations taggées perdront leur tag.')) return;
+  try {
+    const r = await fetch('/api/sail-configs/' + id, { method: 'DELETE' });
+    const d = await r.json();
+    if (r.ok) {
+      showToast('Config supprimée', true);
+      await loadSailConfigs();
+      await loadSailStats();
+    } else {
+      showToast(d.error || 'Erreur suppression', false);
+    }
+  } catch(e) {
+    showToast('Erreur réseau: ' + e.message, false);
+  }
 }
 
 // Init
