@@ -1,0 +1,560 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#060a10">
+  <title>⛵ Quart</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:       #060a10;
+      --bg2:      #0d1520;
+      --bg3:      #111c2b;
+      --border:   rgba(30,60,100,.55);
+      --txt:      #e8f4ff;
+      --muted:    #5a7a9a;
+      --accent:   #3b9eff;
+      --good:     #2dde82;
+      --warn:     #ffbb33;
+      --bad:      #ff5555;
+      --dim:      rgba(255,255,255,.06);
+    }
+
+    html, body { height: 100%; background: var(--bg); color: var(--txt);
+      font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', sans-serif;
+      -webkit-font-smoothing: antialiased; overflow-x: hidden; }
+
+    /* ── Top bar ── */
+    #topbar {
+      display: flex; align-items: center; justify-content: space-between;
+      background: var(--bg2); border-bottom: 1px solid var(--border);
+      padding: 10px 14px; height: 46px; flex-shrink: 0;
+    }
+    #topbar .utc { font-size: 1.05rem; font-weight: 700; font-family: monospace;
+      color: var(--accent); letter-spacing: .04em; }
+    #topbar .age { font-size: .7rem; color: var(--muted); }
+    #topbar .age.stale { color: var(--warn); }
+    #refresh-btn { background: none; border: 1px solid var(--border); color: var(--muted);
+      border-radius: 6px; padding: 4px 10px; font-size: .72rem; cursor: pointer; }
+    #refresh-btn:active { background: var(--dim); }
+
+    /* ── Main scroll ── */
+    #main { overflow-y: auto; -webkit-overflow-scrolling: touch;
+      padding: 10px 10px 30px; display: flex; flex-direction: column; gap: 8px; }
+
+    /* ── Cards ── */
+    .card { background: var(--bg2); border: 1px solid var(--border); border-radius: 12px;
+      padding: 13px 15px; position: relative; }
+    .card-label { font-size: .58rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: .12em; color: var(--muted); margin-bottom: 8px; }
+
+    /* ── Instruments row ── */
+    .instr-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .instr { background: var(--bg2); border: 1px solid var(--border); border-radius: 12px;
+      padding: 12px 14px; }
+    .instr .lbl { font-size: .58rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: .12em; color: var(--muted); margin-bottom: 4px; }
+    .instr .val { font-size: 2.6rem; font-weight: 800; line-height: 1;
+      font-variant-numeric: tabular-nums; }
+    .instr .unit { font-size: .75rem; color: var(--muted); margin-left: 2px; font-weight: 400; }
+    .instr .sub { font-size: .72rem; color: var(--muted); margin-top: 4px; }
+
+    /* ── Vent ── */
+    .wind-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0;
+      text-align: center; }
+    .wind-val-big { font-size: 2.4rem; font-weight: 800; line-height: 1;
+      font-variant-numeric: tabular-nums; }
+    .wind-unit { font-size: .72rem; color: var(--muted); }
+    .wind-label { font-size: .58rem; text-transform: uppercase; letter-spacing: .1em;
+      color: var(--muted); margin-bottom: 4px; }
+    .wind-sector { font-size: .72rem; font-weight: 600; margin-top: 4px; }
+    .wind-divider { width: 1px; background: var(--border); margin: 4px 0; }
+    .wind-arrow-box { font-size: 2rem; line-height: 1; }
+
+    /* ── VMG / Route ── */
+    .route-name { font-size: .78rem; font-weight: 700; color: var(--accent);
+      margin-bottom: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .wp-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+    .wp-badge { background: rgba(59,158,255,.12); border: 1px solid rgba(59,158,255,.3);
+      color: var(--accent); border-radius: 6px; padding: 4px 8px;
+      font-size: .68rem; font-weight: 700; white-space: nowrap; }
+    .wp-dist { font-size: 1.5rem; font-weight: 800; }
+    .wp-bear { font-size: .78rem; color: var(--muted); }
+    .route-stats { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; }
+    .rs-item { background: var(--dim); border-radius: 7px; padding: 7px 8px; text-align: center; }
+    .rs-lbl { font-size: .58rem; color: var(--muted); text-transform: uppercase;
+      letter-spacing: .08em; margin-bottom: 3px; }
+    .rs-val { font-size: .92rem; font-weight: 700; }
+
+    /* ── Polaire ── */
+    .perf-row { display: flex; align-items: center; gap: 12px; }
+    .perf-pct { font-size: 2.2rem; font-weight: 800; line-height: 1; }
+    .perf-bar-wrap { flex: 1; }
+    .perf-bar-track { background: var(--dim); border-radius: 4px; height: 8px; margin-bottom: 5px; }
+    .perf-bar-fill { height: 8px; border-radius: 4px; transition: width .4s; }
+    .perf-label { font-size: .7rem; color: var(--muted); }
+
+    /* ── Forecast 12h ── */
+    .fc-scroll { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px;
+      -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+    .fc-scroll::-webkit-scrollbar { display: none; }
+    .fc-item { flex-shrink: 0; background: var(--dim); border-radius: 8px;
+      padding: 7px 8px; text-align: center; min-width: 52px; }
+    .fc-lbl  { font-size: .6rem; color: var(--muted); margin-bottom: 4px; }
+    .fc-tws  { font-size: .92rem; font-weight: 700; }
+    .fc-dir  { font-size: .6rem; color: var(--muted); margin-top: 2px; }
+    .fc-delta { font-size: .6rem; margin-top: 2px; }
+
+    /* ── Logbook quick ── */
+    #log-btn { width: 100%; background: rgba(59,158,255,.1); border: 1px solid rgba(59,158,255,.35);
+      color: var(--accent); border-radius: 10px; padding: 14px; font-size: .88rem; font-weight: 600;
+      cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; }
+    #log-btn:active { background: rgba(59,158,255,.2); }
+
+    /* ── Log entries ── */
+    .log-entry { display: flex; gap: 9px; align-items: flex-start; padding: 8px 0;
+      border-bottom: 1px solid var(--border); }
+    .log-entry:last-child { border-bottom: none; }
+    .log-time { font-size: .65rem; color: var(--muted); font-family: monospace;
+      white-space: nowrap; padding-top: 1px; min-width: 60px; }
+    .log-type { font-size: .6rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: .06em; padding: 2px 5px; border-radius: 3px; white-space: nowrap; flex-shrink: 0; }
+    .log-note     { background: rgba(59,158,255,.12); color: var(--accent); }
+    .log-weather  { background: rgba(251,191,36,.1);  color: #fbbf24; }
+    .log-sail_change { background: rgba(45,222,130,.1); color: var(--good); }
+    .log-incident { background: rgba(255,85,85,.12);  color: var(--bad); }
+    .log-auto     { background: rgba(90,122,154,.12); color: var(--muted); }
+    .log-content  { font-size: .74rem; color: var(--txt); line-height: 1.35; }
+
+    /* ── Modal logbook ── */
+    #log-modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.7);
+      z-index: 100; align-items: flex-end; }
+    #log-modal.open { display: flex; }
+    #log-modal-inner { background: var(--bg3); border-top: 1px solid var(--border);
+      border-radius: 16px 16px 0 0; padding: 20px 16px 30px; width: 100%; }
+    #log-modal-inner textarea {
+      width: 100%; background: var(--bg2); border: 1px solid var(--border); color: var(--txt);
+      border-radius: 8px; padding: 10px 12px; font-size: .88rem; resize: none;
+      min-height: 90px; margin: 10px 0; font-family: inherit; }
+    .modal-title { font-size: .85rem; font-weight: 700; margin-bottom: 10px; color: var(--accent); }
+    .modal-type-row { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+    .type-btn { background: var(--dim); border: 1px solid var(--border); color: var(--muted);
+      border-radius: 6px; padding: 5px 11px; font-size: .72rem; cursor: pointer; }
+    .type-btn.sel { background: rgba(59,158,255,.15); border-color: var(--accent); color: var(--accent); }
+    .modal-row { display: flex; gap: 8px; margin-top: 8px; }
+    .modal-row button { flex: 1; padding: 13px; border-radius: 9px; font-size: .85rem;
+      font-weight: 600; cursor: pointer; border: none; }
+    #modal-cancel { background: var(--dim); color: var(--muted); }
+    #modal-save   { background: var(--accent); color: #fff; }
+
+    /* ── Position card ── */
+    .pos-row { display: flex; justify-content: space-between; align-items: center; }
+    .pos-coord { font-size: .88rem; font-family: monospace; color: var(--txt); }
+    .pos-meta  { font-size: .68rem; color: var(--muted); text-align: right; }
+
+    /* ── Couleurs valeurs ── */
+    .c-good { color: var(--good); }
+    .c-warn { color: var(--warn); }
+    .c-bad  { color: var(--bad);  }
+    .c-accent { color: var(--accent); }
+
+    /* ── Section titre ── */
+    .stitle { font-size: .58rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: .12em; color: var(--muted); margin-bottom: 8px; }
+
+    /* ── No data ── */
+    .no-data { color: var(--muted); font-size: .82rem; text-align: center; padding: 20px 0; }
+  </style>
+</head>
+<body>
+
+<!-- Top bar -->
+<div id="topbar">
+  <span class="utc" id="utc-clock">--:--:-- UTC</span>
+  <span class="age" id="pos-age"></span>
+  <button class="refresh-btn" onclick="refresh()" id="refresh-btn">↻</button>
+</div>
+
+<div id="main">
+
+  <!-- ── SOG / COG ── -->
+  <div class="instr-row">
+    <div class="instr">
+      <div class="lbl">Vitesse (SOG)</div>
+      <div><span class="val c-good" id="sog">—</span><span class="unit">kts</span></div>
+      <div class="sub" id="polar-sub">—</div>
+    </div>
+    <div class="instr">
+      <div class="lbl">Cap (COG)</div>
+      <div><span class="val" id="cog" style="color:#e8f4ff">—</span><span class="unit">°</span></div>
+      <div class="sub" id="cog-sub">—</div>
+    </div>
+  </div>
+
+  <!-- ── Vent ── -->
+  <div class="card">
+    <div class="stitle">Vent vrai</div>
+    <div class="wind-grid">
+      <div>
+        <div class="wind-label">TWS</div>
+        <div class="wind-val-big c-accent" id="tws">—</div>
+        <div class="wind-unit">kts</div>
+        <div class="wind-unit" id="gusts" style="margin-top:3px"></div>
+      </div>
+      <div style="display:flex;flex-direction:column;align-items:center;justify-content:center">
+        <div class="wind-label">Vient de</div>
+        <div class="wind-arrow-box" id="wind-arrow">—</div>
+        <div class="wind-unit" id="twd">—</div>
+      </div>
+      <div style="text-align:right">
+        <div class="wind-label">TWA</div>
+        <div class="wind-val-big" id="twa" style="color:#7ecfff">—</div>
+        <div class="wind-unit">°</div>
+        <div class="wind-sector" id="twa-label" style="margin-top:5px"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Polaire ── -->
+  <div class="card" id="polar-card">
+    <div class="stitle">Performance / Polaire</div>
+    <div class="perf-row">
+      <div>
+        <div class="perf-pct" id="perf-pct">—</div>
+        <div style="font-size:.65rem;color:var(--muted);margin-top:3px">efficacité</div>
+      </div>
+      <div class="perf-bar-wrap">
+        <div class="perf-bar-track">
+          <div class="perf-bar-fill" id="perf-bar" style="width:0%"></div>
+        </div>
+        <div class="perf-label" id="perf-label">—</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Route / WP ── -->
+  <div class="card" id="route-card">
+    <div class="stitle">Route active</div>
+    <div id="route-inner"><div class="no-data">Aucune traversée active</div></div>
+  </div>
+
+  <!-- ── Forecast 12h ── -->
+  <div class="card">
+    <div class="stitle">Vent · prochaines 12h</div>
+    <div class="fc-scroll" id="fc-scroll">
+      <div class="no-data">Chargement…</div>
+    </div>
+  </div>
+
+  <!-- ── Logbook ── -->
+  <button id="log-btn" onclick="openLog()">
+    ✎ &nbsp;Note de quart
+  </button>
+
+  <div class="card">
+    <div class="stitle">Journal récent</div>
+    <div id="log-list"><div class="no-data">—</div></div>
+  </div>
+
+  <!-- ── Position ── -->
+  <div class="card">
+    <div class="stitle">Position</div>
+    <div class="pos-row">
+      <div id="pos-coord" class="pos-coord">— / —</div>
+      <div id="pos-meta" class="pos-meta">—</div>
+    </div>
+  </div>
+
+</div><!-- /main -->
+
+<!-- Modal logbook -->
+<div id="log-modal">
+  <div id="log-modal-inner">
+    <div class="modal-title">✎ Note de quart</div>
+    <div class="modal-type-row">
+      <button class="type-btn sel" data-type="note">Note</button>
+      <button class="type-btn" data-type="weather">Météo</button>
+      <button class="type-btn" data-type="sail_change">Voiles</button>
+      <button class="type-btn" data-type="waypoint">Waypoint</button>
+      <button class="type-btn" data-type="incident">Incident</button>
+    </div>
+    <textarea id="log-text" placeholder="…" rows="3"></textarea>
+    <div class="modal-row">
+      <button id="modal-cancel" onclick="closeLog()">Annuler</button>
+      <button id="modal-save" onclick="saveLog()">Enregistrer</button>
+    </div>
+  </div>
+</div>
+
+<script>
+let data = null;
+let selectedType = 'note';
+let activeRouteId = null;
+let autoRefreshTimer = null;
+
+// ── Clock ──────────────────────────────────────────────────────────────────
+function updateClock() {
+  const now = new Date();
+  const h = String(now.getUTCHours()).padStart(2,'0');
+  const m = String(now.getUTCMinutes()).padStart(2,'0');
+  const s = String(now.getUTCSeconds()).padStart(2,'0');
+  document.getElementById('utc-clock').textContent = `${h}:${m}:${s} UTC`;
+}
+setInterval(updateClock, 1000);
+updateClock();
+
+// ── Helpers ───────────────────────────────────────────────────────────────
+function cogLabel(cog) {
+  const dirs = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSO','SO','OSO','O','ONO','NO','NNO'];
+  return dirs[Math.round(cog / 22.5) % 16];
+}
+
+function colorClass(val, good, warn) {
+  if (val == null) return '';
+  if (val >= good) return 'c-good';
+  if (val >= warn) return 'c-warn';
+  return 'c-bad';
+}
+
+function windColor(tws) {
+  if (tws == null) return '';
+  if (tws < 15)  return 'c-good';
+  if (tws < 25)  return 'c-accent';
+  if (tws < 35)  return 'c-warn';
+  return 'c-bad';
+}
+
+function windArrow(twd) {
+  // Rotate compass arrow emoji based on direction
+  const arrows = ['↓','↙','←','↖','↑','↗','→','↘'];
+  return arrows[Math.round(((twd + 22.5) % 360) / 45) % 8];
+}
+
+// ── Render ────────────────────────────────────────────────────────────────
+function render(d) {
+  data = d;
+  const pos = d.position || {};
+  const wind = d.wind || {};
+  const polar = d.polar || {};
+  const route = d.route;
+  const fc = d.forecast_12h || [];
+
+  // SOG
+  const sogEl = document.getElementById('sog');
+  const sog = pos.sog;
+  sogEl.textContent = sog != null ? sog.toFixed(1) : '—';
+  sogEl.className = 'val ' + colorClass(sog, 3, 1);
+
+  // COG
+  const cogEl = document.getElementById('cog');
+  const cog = pos.cog;
+  cogEl.textContent = cog != null ? cog : '—';
+  document.getElementById('cog-sub').textContent = cog != null ? cogLabel(cog) : '—';
+
+  // Polar sub
+  const target = polar.target_kts;
+  const eff = polar.efficiency_pct;
+  if (target != null) {
+    document.getElementById('polar-sub').textContent = `cible ${target} kts`;
+  }
+
+  // TWS
+  const tws = wind.tws_kts;
+  const twsEl = document.getElementById('tws');
+  twsEl.textContent = tws != null ? tws.toFixed(1) : '—';
+  twsEl.className = 'wind-val-big ' + windColor(tws);
+
+  // Gusts
+  const gusts = wind.gusts_kts;
+  document.getElementById('gusts').textContent = gusts != null ? `rafales ${gusts.toFixed(0)} kts` : '';
+
+  // TWD / arrow
+  const twd = wind.twd_deg;
+  document.getElementById('twd').textContent = twd != null ? `${twd}° (${wind.wind_arrow || ''})` : '—';
+  document.getElementById('wind-arrow').textContent = twd != null ? windArrow(twd) : '—';
+
+  // TWA
+  const twa = wind.twa_deg;
+  const twaEl = document.getElementById('twa');
+  twaEl.textContent = twa != null ? twa : '—';
+  document.getElementById('twa-label').textContent = wind.twa_label || '';
+
+  // Performance
+  if (eff != null) {
+    document.getElementById('perf-pct').textContent = eff + '%';
+    const bar = document.getElementById('perf-bar');
+    const barColor = eff >= 90 ? '#2dde82' : eff >= 75 ? '#ffbb33' : '#ff5555';
+    bar.style.width = eff + '%';
+    bar.style.background = barColor;
+    document.getElementById('perf-pct').style.color = barColor;
+    document.getElementById('perf-label').textContent =
+      target != null ? `SOG ${sog != null ? sog.toFixed(1) : '—'} kts vs cible ${target} kts` : '';
+  } else {
+    document.getElementById('perf-pct').textContent = '—';
+    document.getElementById('perf-label').textContent = 'données polaires indisponibles';
+  }
+
+  // Route
+  const routeEl = document.getElementById('route-inner');
+  if (route) {
+    activeRouteId = route.route_id;
+    const vmgColor = (route.vmg != null && route.vmg > 0) ? '#2dde82' : '#ff5555';
+    routeEl.innerHTML = `
+      <div class="route-name">⚓ ${escHtml(route.route_name)}</div>
+      <div class="wp-row">
+        <div class="wp-badge">${escHtml(route.next_wp_name)}</div>
+        <div><span class="wp-dist c-accent">${route.next_wp_dist_nm}</span>
+          <span style="font-size:.72rem;color:var(--muted)"> nm</span></div>
+        <div class="wp-bear" style="margin-left:auto">${route.next_wp_bearing}° · ${cogLabel(route.next_wp_bearing)}</div>
+      </div>
+      <div class="route-stats">
+        <div class="rs-item">
+          <div class="rs-lbl">VMG</div>
+          <div class="rs-val" style="color:${vmgColor}">${route.vmg != null ? route.vmg.toFixed(1)+' kts' : '—'}</div>
+        </div>
+        <div class="rs-item">
+          <div class="rs-lbl">Restant</div>
+          <div class="rs-val">${route.nm_remaining || '—'} nm</div>
+        </div>
+        <div class="rs-item">
+          <div class="rs-lbl">ETA</div>
+          <div class="rs-val" style="font-size:.78rem">${escHtml(route.eta || '—')}</div>
+        </div>
+      </div>`;
+  } else {
+    activeRouteId = null;
+    routeEl.innerHTML = '<div class="no-data">Aucune traversée active</div>';
+  }
+
+  // Forecast 12h
+  const fcEl = document.getElementById('fc-scroll');
+  if (fc.length) {
+    const firstTws = data.wind.tws_kts || 0;
+    fcEl.innerHTML = fc.map(f => {
+      if (!f.tws) return '';
+      const delta = f.tws - firstTws;
+      const deltaStr = delta > 0.5 ? `<span style="color:#ff9944">▲${delta.toFixed(0)}</span>`
+                     : delta < -0.5 ? `<span style="color:#44ddaa">▼${Math.abs(delta).toFixed(0)}</span>`
+                     : `<span style="color:var(--muted)">≈</span>`;
+      const col = windColor(f.tws);
+      return `<div class="fc-item">
+        <div class="fc-lbl">${f.label}</div>
+        <div class="fc-tws ${col}">${f.tws.toFixed(0)}</div>
+        <div class="fc-dir">${f.twd != null ? windArrow(f.twd)+(f.twd.toFixed(0))+'°' : '—'}</div>
+        <div class="fc-delta">${deltaStr}</div>
+      </div>`;
+    }).join('');
+  } else {
+    fcEl.innerHTML = '<div class="no-data" style="padding:8px">—</div>';
+  }
+
+  // Logbook
+  const logs = d.logbook || [];
+  const logEl = document.getElementById('log-list');
+  if (logs.length) {
+    logEl.innerHTML = logs.map(l => `
+      <div class="log-entry">
+        <span class="log-time">${escHtml(l.time)}</span>
+        <span class="log-type log-${l.type}">${escHtml(l.type.replace('_',' '))}</span>
+        <span class="log-content">${escHtml(l.content)}</span>
+      </div>`).join('');
+  } else {
+    logEl.innerHTML = '<div class="no-data">Aucune entrée</div>';
+  }
+
+  // Position
+  const lat = pos.lat, lon = pos.lon;
+  if (lat != null) {
+    const latS = (lat >= 0 ? lat.toFixed(4)+'°N' : Math.abs(lat).toFixed(4)+'°S');
+    const lonS = (lon >= 0 ? lon.toFixed(4)+'°E' : Math.abs(lon).toFixed(4)+'°W');
+    document.getElementById('pos-coord').textContent = `${latS}  ${lonS}`;
+  }
+  const age = pos.age_min;
+  const ageEl = document.getElementById('pos-age');
+  if (age != null) {
+    ageEl.textContent = age < 60 ? `il y a ${age} min` : `il y a ${Math.round(age/60)}h`;
+    ageEl.className = 'age' + (age > 30 ? ' stale' : '');
+  }
+  document.getElementById('pos-meta').textContent = pos.timestamp ? pos.timestamp.slice(0,16).replace('T',' ')+' UTC' : '';
+}
+
+// ── Fetch ─────────────────────────────────────────────────────────────────
+async function refresh() {
+  document.getElementById('refresh-btn').textContent = '↻…';
+  try {
+    const r = await fetch('/api/quart');
+    const d = await r.json();
+    if (!d.error) render(d);
+  } catch(e) {
+    console.warn('quart fetch error', e);
+  } finally {
+    document.getElementById('refresh-btn').textContent = '↻';
+  }
+}
+
+// Auto refresh every 60s
+function scheduleRefresh() {
+  clearTimeout(autoRefreshTimer);
+  autoRefreshTimer = setTimeout(async () => {
+    await refresh();
+    scheduleRefresh();
+  }, 60000);
+}
+
+// ── Logbook modal ─────────────────────────────────────────────────────────
+function openLog() {
+  document.getElementById('log-modal').classList.add('open');
+  document.getElementById('log-text').focus();
+}
+
+function closeLog() {
+  document.getElementById('log-modal').classList.remove('open');
+  document.getElementById('log-text').value = '';
+}
+
+document.querySelectorAll('.type-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.type-btn').forEach(b => b.classList.remove('sel'));
+    btn.classList.add('sel');
+    selectedType = btn.dataset.type;
+  });
+});
+
+async function saveLog() {
+  const content = document.getElementById('log-text').value.trim();
+  if (!content) return;
+  const routeId = activeRouteId || 1;
+  try {
+    await fetch(`/api/logbook/${routeId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ entry_type: selectedType, content }),
+    });
+    closeLog();
+    await refresh();
+  } catch(e) {
+    alert('Erreur enregistrement');
+  }
+}
+
+// Fermer modal si click extérieur
+document.getElementById('log-modal').addEventListener('click', e => {
+  if (e.target === document.getElementById('log-modal')) closeLog();
+});
+
+// ── XSS ───────────────────────────────────────────────────────────────────
+function escHtml(s) {
+  if (s == null) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+                  .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────
+refresh().then(scheduleRefresh);
+</script>
+</body>
+</html>

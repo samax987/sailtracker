@@ -20,6 +20,7 @@ MOBILE_UA = re.compile(r"Android|iPhone|iPad|iPod|Mobile|BlackBerry|IEMobile", r
 from datetime import datetime, timezone
 from pathlib import Path
 
+import requests
 import numpy as np
 from dotenv import load_dotenv
 from flask import Flask, jsonify, request, send_from_directory, render_template, make_response
@@ -2594,6 +2595,274 @@ def api_sail_configs_stats():
             "full_sail_obs": full_sail,
             "reduced_sail_obs": reduced,
             "by_config": [dict(r) for r in by_config],
+        })
+    finally:
+        conn.close()
+
+
+# =============================================================================
+# Dashboard de quart
+# =============================================================================
+
+# Cache vent pour éviter de spammer Open-Meteo (TTL 15 min)
+_quart_wind_cache: dict = {}
+
+def _fetch_quart_wind(lat: float, lon: float) -> dict:
+    """Fetch vent actuel + prévision 12h à la position du bateau (Open-Meteo)."""
+    import time as _time
+    now_ts = _time.time()
+    cached = _quart_wind_cache.get("data")
+    cached_at = _quart_wind_cache.get("ts", 0)
+    cached_lat = _quart_wind_cache.get("lat")
+    cached_lon = _quart_wind_cache.get("lon")
+    # Réutilise le cache si < 15 min et position inchangée (< 5 nm)
+    if (cached and now_ts - cached_at < 900
+            and cached_lat is not None
+            and haversine_nm(lat, lon, cached_lat, cached_lon) < 5):
+        return cached
+
+    url = "https://api.open-meteo.com/v1/forecast"
+    params = {
+        "latitude": round(lat, 3), "longitude": round(lon, 3),
+        "hourly": "wind_speed_10m,wind_direction_10m,wind_gusts_10m",
+        "wind_speed_unit": "kn",
+        "models": "ecmwf_ifs025",
+        "past_hours": 1,
+        "forecast_hours": 13,
+    }
+    try:
+        resp = requests.get(url, params=params, timeout=15,
+                            headers={"User-Agent": "SailTracker/1.0"})
+        resp.raise_for_status()
+        data = resp.json()
+        hourly = data.get("hourly", {})
+        times  = hourly.get("time", [])
+        speeds = hourly.get("wind_speed_10m", [])
+        dirs   = hourly.get("wind_direction_10m", [])
+        gusts  = hourly.get("wind_gusts_10m", [])
+
+        from datetime import datetime as _dt, timezone as _tz
+        now_naive = _dt.now(_tz.utc).replace(tzinfo=None)
+        best_idx, best_diff = 0, float("inf")
+        for i, t in enumerate(times):
+            try:
+                td = abs((_dt.fromisoformat(t) - now_naive).total_seconds())
+                if td < best_diff:
+                    best_diff, best_idx = td, i
+            except Exception:
+                continue
+
+        def _v(arr, i): return round(arr[i], 1) if i < len(arr) and arr[i] is not None else None
+
+        current = {
+            "tws_kts": _v(speeds, best_idx),
+            "twd_deg": _v(dirs, best_idx),
+            "gusts_kts": _v(gusts, best_idx),
+        }
+
+        # Prochaines 12h (horaire)
+        forecast_12h = []
+        for offset in range(1, 13):
+            idx = best_idx + offset
+            if idx < len(times):
+                forecast_12h.append({
+                    "label": f"+{offset}h",
+                    "tws": _v(speeds, idx),
+                    "twd": _v(dirs, idx),
+                    "gusts": _v(gusts, idx),
+                })
+
+        result = {"current": current, "forecast_12h": forecast_12h}
+        _quart_wind_cache.update({"data": result, "ts": now_ts, "lat": lat, "lon": lon})
+        return result
+    except Exception as e:
+        logger.warning("quart wind fetch error: %s", e)
+        return {"current": {}, "forecast_12h": []}
+
+
+def _twa_label(twa: float) -> str:
+    if twa < 35:  return "Près serré"
+    if twa < 60:  return "Près"
+    if twa < 90:  return "Petit largue"
+    if twa < 120: return "Largue"
+    if twa < 150: return "Grand largue"
+    return "Vent arrière"
+
+
+def _wind_dir_arrow(twd: float) -> str:
+    dirs = ["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSO","SO","OSO","O","ONO","NO","NNO"]
+    return dirs[int((twd + 11.25) / 22.5) % 16]
+
+
+@app.route("/quart")
+def quart_page():
+    return render_template("quart.html")
+
+
+@app.route("/api/quart")
+def api_quart():
+    conn = get_db()
+    try:
+        # ── Position ──────────────────────────────────────────────────────────
+        pos_row = conn.execute(
+            """SELECT latitude, longitude, speed_knots, course, timestamp
+               FROM positions WHERE source='inreach'
+               ORDER BY timestamp DESC LIMIT 1"""
+        ).fetchone()
+        if not pos_row:
+            return jsonify({"error": "Aucune position InReach"}), 404
+
+        boat_lat  = float(pos_row["latitude"])
+        boat_lon  = float(pos_row["longitude"])
+        boat_sog  = round(float(pos_row["speed_knots"] or 0), 1)
+        boat_cog  = round(float(pos_row["course"] or 0), 0)
+        pos_ts    = pos_row["timestamp"]
+        pos_age   = minutes_ago(pos_ts)
+
+        # ── Vent (Open-Meteo) ─────────────────────────────────────────────────
+        wind_data = _fetch_quart_wind(boat_lat, boat_lon)
+        current_wind = wind_data.get("current", {})
+        tws = current_wind.get("tws_kts")
+        twd = current_wind.get("twd_deg")
+        gusts = current_wind.get("gusts_kts")
+
+        twa = None
+        twa_label = None
+        if twd is not None:
+            raw = (twd - boat_cog + 360) % 360
+            twa = round(raw if raw <= 180 else 360 - raw, 0)
+            twa_label = _twa_label(twa)
+
+        wind_arrow = _wind_dir_arrow(twd) if twd is not None else None
+
+        # ── Polaire : vitesse cible ────────────────────────────────────────────
+        polar_target = None
+        polar_efficiency = None
+        if twa is not None and tws is not None:
+            try:
+                polar = get_polar()
+                target = polar.get_boat_speed(twa, tws)
+                if target > 0.1:
+                    polar_target = round(target, 1)
+                    polar_efficiency = min(100, round(boat_sog / target * 100))
+            except Exception:
+                pass
+
+        # ── Passage actif ─────────────────────────────────────────────────────
+        route_info = None
+        active_route = conn.execute(
+            "SELECT id, name, waypoints FROM passage_routes WHERE phase='active' LIMIT 1"
+        ).fetchone()
+        if active_route:
+            import json as _json
+            wps = _json.loads(active_route["waypoints"] or "[]")
+            if wps:
+                # Prochain WP non atteint (le plus proche devant)
+                next_wp = None
+                min_dist = float("inf")
+                for wp in wps:
+                    d = haversine_nm(boat_lat, boat_lon, wp["lat"], wp["lon"])
+                    if d < min_dist:
+                        min_dist = d
+                        next_wp = wp
+
+                # Distance totale restante
+                # Trouve l'index du next_wp dans la liste
+                try:
+                    wp_idx = next((i for i, w in enumerate(wps)
+                                   if abs(w["lat"] - next_wp["lat"]) < 0.01), 0)
+                    remaining_wps = wps[wp_idx:]
+                    nm_remaining = haversine_nm(boat_lat, boat_lon,
+                                               remaining_wps[0]["lat"], remaining_wps[0]["lon"])
+                    for i in range(1, len(remaining_wps)):
+                        nm_remaining += haversine_nm(remaining_wps[i-1]["lat"], remaining_wps[i-1]["lon"],
+                                                     remaining_wps[i]["lat"], remaining_wps[i]["lon"])
+                except Exception:
+                    nm_remaining = min_dist
+
+                # Bearing vers prochain WP
+                import math as _math
+                dlon = _math.radians(next_wp["lon"] - boat_lon)
+                lat1r, lat2r = _math.radians(boat_lat), _math.radians(next_wp["lat"])
+                x = _math.sin(dlon) * _math.cos(lat2r)
+                y = _math.cos(lat1r) * _math.sin(lat2r) - _math.sin(lat1r) * _math.cos(lat2r) * _math.cos(dlon)
+                bearing_to_wp = round((_math.degrees(_math.atan2(x, y)) + 360) % 360, 0)
+
+                # VMG vers la destination finale
+                vmg = None
+                if boat_sog > 0 and len(wps) > 0:
+                    final_wp = wps[-1]
+                    bear_final = (_math.degrees(_math.atan2(
+                        _math.sin(_math.radians(final_wp["lon"] - boat_lon)) * _math.cos(_math.radians(final_wp["lat"])),
+                        _math.cos(_math.radians(boat_lat)) * _math.sin(_math.radians(final_wp["lat"])) -
+                        _math.sin(_math.radians(boat_lat)) * _math.cos(_math.radians(final_wp["lat"])) *
+                        _math.cos(_math.radians(final_wp["lon"] - boat_lon))
+                    )) + 360) % 360
+                    vmg = round(boat_sog * _math.cos(_math.radians(boat_cog - bear_final)), 1)
+
+                # ETA
+                eta_str = None
+                if vmg and vmg > 0.5:
+                    from datetime import datetime as _dt2, timedelta as _td2, timezone as _tz2
+                    hours_left = nm_remaining / vmg
+                    eta_dt = _dt2.now(_tz2.utc) + _td2(hours=hours_left)
+                    if hours_left < 48:
+                        eta_str = eta_dt.strftime("%d/%m %H:%Mz")
+                    else:
+                        days = int(hours_left / 24)
+                        eta_str = f"J+{days} ({eta_dt.strftime('%d/%m')})"
+
+                route_info = {
+                    "route_id": active_route["id"],
+                    "route_name": active_route["name"],
+                    "next_wp_name": next_wp.get("name", f"WP{wp_idx+1}"),
+                    "next_wp_dist_nm": round(min_dist, 1),
+                    "next_wp_bearing": bearing_to_wp,
+                    "nm_remaining": round(nm_remaining, 0),
+                    "vmg": vmg,
+                    "eta": eta_str,
+                }
+
+        # ── Logbook récent ────────────────────────────────────────────────────
+        recent_logs = []
+        try:
+            log_rows = conn.execute(
+                """SELECT entry_time, entry_type, content FROM logbook_entries
+                   ORDER BY entry_time DESC LIMIT 3"""
+            ).fetchall()
+            for r in log_rows:
+                recent_logs.append({
+                    "time": (r["entry_time"] or "")[:16].replace("T", " "),
+                    "type": r["entry_type"],
+                    "content": (r["content"] or "")[:80],
+                })
+        except Exception:
+            pass
+
+        return jsonify({
+            "position": {
+                "lat": round(boat_lat, 4),
+                "lon": round(boat_lon, 4),
+                "sog": boat_sog,
+                "cog": int(boat_cog),
+                "timestamp": pos_ts,
+                "age_min": pos_age,
+            },
+            "wind": {
+                "tws_kts": tws,
+                "twd_deg": twd,
+                "twa_deg": int(twa) if twa is not None else None,
+                "twa_label": twa_label,
+                "wind_arrow": wind_arrow,
+                "gusts_kts": gusts,
+            },
+            "polar": {
+                "target_kts": polar_target,
+                "efficiency_pct": polar_efficiency,
+            },
+            "route": route_info,
+            "forecast_12h": wind_data.get("forecast_12h", []),
+            "logbook": recent_logs,
         })
     finally:
         conn.close()
