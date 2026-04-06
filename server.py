@@ -16,7 +16,8 @@ import threading
 import uuid
 import concurrent.futures
 import re
-MOBILE_UA = re.compile(r"Android|iPhone|iPad|iPod|Mobile|BlackBerry|IEMobile", re.IGNORECASE)
+# Téléphones uniquement — les tablettes (iPad, Android tablet) restent sur index.html
+MOBILE_UA = re.compile(r"iPhone|iPod|Android.*Mobile|BlackBerry|IEMobile|Windows Phone", re.IGNORECASE)
 from datetime import datetime, timezone
 from pathlib import Path
 
