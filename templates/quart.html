@@ -956,7 +956,7 @@ async function saveLog() {
     await fetch(`/api/logbook/${routeId}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ entry_type: selectedType, content }),
+      body: JSON.stringify({ entry_type: selectedType, text: content }),
     });
     closeLog();
     await refresh();

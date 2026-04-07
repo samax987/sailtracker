@@ -464,7 +464,8 @@ def api_weather_forecast():
 def api_routes_list():
     conn = get_db()
     rows = conn.execute(
-        "SELECT id,name,boat_speed_avg_knots,max_wind_knots,max_wave_m,max_swell_m,created_at,status,last_computed,phase,actual_departure,actual_arrival,departure_port,arrival_port FROM passage_routes ORDER BY id"
+        "SELECT id,name,boat_speed_avg_knots,max_wind_knots,max_wave_m,max_swell_m,created_at,status,last_computed,phase,actual_departure,actual_arrival,departure_port,arrival_port FROM passage_routes WHERE user_id=? ORDER BY id",
+        (current_user.id,)
     ).fetchall()
     conn.close()
     return jsonify({"routes": [{
@@ -549,8 +550,8 @@ def api_create_route():
 
     conn = get_db()
     cur = conn.execute(
-        "INSERT INTO passage_routes (name,waypoints,boat_speed_avg_knots,max_wind_knots,max_wave_m,max_swell_m,status) VALUES (?,?,?,?,?,?,'pending')",
-        (name, json.dumps(waypoints, ensure_ascii=False), boat_speed, max_wind, max_wave, max_swell),
+        "INSERT INTO passage_routes (user_id,name,waypoints,boat_speed_avg_knots,max_wind_knots,max_wave_m,max_swell_m,status) VALUES (?,?,?,?,?,?,?,'pending')",
+        (current_user.id, name, json.dumps(waypoints, ensure_ascii=False), boat_speed, max_wind, max_wave, max_swell),
     )
     route_id = cur.lastrowid
     conn.commit()
@@ -2521,16 +2522,16 @@ def api_logbook_add(route_id):
         lat = data.get("latitude")
         lon = data.get("longitude")
         if lat is None:
-            pos = conn.execute("SELECT latitude, longitude FROM positions ORDER BY timestamp DESC LIMIT 1").fetchone()
+            pos = conn.execute("SELECT latitude, longitude FROM positions WHERE user_id=? ORDER BY timestamp DESC LIMIT 1", (current_user.id,)).fetchone()
             if pos:
                 lat, lon = pos["latitude"], pos["longitude"]
         timestamp = data.get("timestamp") or datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         cur = conn.execute(
             """INSERT INTO logbook_entries
-               (route_id, timestamp, entry_type, text, latitude, longitude,
+               (route_id, user_id, timestamp, entry_type, text, latitude, longitude,
                 wind_speed_kts, wind_dir_deg, sog_kts, sea_state, sail_config, created_by)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (route_id, timestamp, entry_type, text, lat, lon,
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (route_id, current_user.id, timestamp, entry_type, text, lat, lon,
              data.get("wind_speed_kts"), data.get("wind_dir_deg"),
              data.get("sog_kts"), data.get("sea_state"), data.get("sail_config"),
              data.get("created_by", "manual"))
@@ -3185,14 +3186,16 @@ def api_quart():
         recent_logs = []
         try:
             log_rows = conn.execute(
-                """SELECT entry_time, entry_type, content FROM logbook_entries
-                   ORDER BY entry_time DESC LIMIT 3"""
+                """SELECT timestamp, entry_type, text FROM logbook_entries
+                   WHERE user_id=?
+                   ORDER BY timestamp DESC LIMIT 5""",
+                (current_user.id,)
             ).fetchall()
             for r in log_rows:
                 recent_logs.append({
-                    "time": (r["entry_time"] or "")[:16].replace("T", " "),
+                    "time": (r["timestamp"] or "")[:16].replace("T", " "),
                     "type": r["entry_type"],
-                    "content": (r["content"] or "")[:80],
+                    "content": (r["text"] or "")[:80],
                 })
         except Exception:
             pass
