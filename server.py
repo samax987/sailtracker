@@ -24,7 +24,10 @@ from pathlib import Path
 import requests
 import numpy as np
 from dotenv import load_dotenv
-from flask import Flask, jsonify, request, send_from_directory, render_template, make_response
+from flask import Flask, jsonify, request, send_from_directory, render_template, make_response, redirect, url_for
+from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
+from werkzeug.security import generate_password_hash, check_password_hash
+import secrets
 
 BASE_DIR = Path(__file__).parent
 load_dotenv(BASE_DIR / ".env")
@@ -74,6 +77,10 @@ def setup_logging():
 logger = setup_logging()
 
 app = Flask(__name__, static_folder=str(STATIC_DIR), template_folder=str(TEMPLATE_DIR))
+app.secret_key = os.getenv("SECRET_KEY", secrets.token_hex(32))
+login_manager = LoginManager(app)
+login_manager.login_view = "login_page"
+login_manager.login_message = "Connectez-vous pour accéder à SailTracker"
 
 # Filtre Jinja2 pour couleur de score
 @app.template_filter('score_color')
@@ -90,6 +97,37 @@ def score_label_filter(score):
 
 from flask_cors import CORS
 CORS(app, origins=["http://45.55.239.73", "http://localhost", "http://127.0.0.1"])
+
+# =============================================================================
+# Auth — User class + loader
+# =============================================================================
+
+class User(UserMixin):
+    def __init__(self, id, username, email, boat_name, boat_type, is_admin):
+        self.id = id
+        self.username = username
+        self.email = email
+        self.boat_name = boat_name
+        self.boat_type = boat_type
+        self.is_admin = bool(is_admin)
+
+@login_manager.user_loader
+def load_user(user_id):
+    conn = get_db()
+    row = conn.execute(
+        "SELECT id, username, email, boat_name, boat_type, is_admin FROM users WHERE id=?",
+        (int(user_id),)
+    ).fetchone()
+    conn.close()
+    if row:
+        return User(row['id'], row['username'], row['email'], row['boat_name'], row['boat_type'], row['is_admin'])
+    return None
+
+@login_manager.unauthorized_handler
+def unauthorized():
+    if request.path.startswith('/api/'):
+        return jsonify({"error": "Non authentifié", "login_url": "/login"}), 401
+    return redirect(url_for('login_page', next=request.url))
 
 from briefing import generate_weather_briefing
 from polars import get_polar, reload_polar, update_polars_from_observations, PolarDiagram
@@ -176,6 +214,7 @@ def great_circle_waypoints(lat1, lon1, name1, lat2, lon2, name2, spacing_nm=250.
 # =============================================================================
 
 @app.route("/")
+@login_required
 def index():
     ua = request.headers.get('User-Agent', '')
     if MOBILE_UA.search(ua):
@@ -183,14 +222,17 @@ def index():
     return send_from_directory(str(STATIC_DIR), 'index.html')
 
 @app.route("/mobile")
+@login_required
 def mobile_index():
     return send_from_directory(str(STATIC_DIR), 'index_mobile.html')
 
 @app.route("/passage")
+@login_required
 def passage_page():
     return send_from_directory(str(STATIC_DIR), "passage.html")
 
 @app.route("/polars")
+@login_required
 def polars_page():
     return render_template("polars.html")
 
@@ -203,6 +245,7 @@ def static_files(filename):
 # =============================================================================
 
 @app.route("/api/position/latest")
+@login_required
 def api_position_latest():
     source = request.args.get("source")
     conn = get_db()
@@ -225,6 +268,7 @@ def api_position_latest():
     })
 
 @app.route("/api/position/track")
+@login_required
 def api_position_track():
     hours = request.args.get("hours", 72, type=int)
     hours = max(1, min(hours, 720))
@@ -248,6 +292,7 @@ def api_position_track():
 # =============================================================================
 
 @app.route("/api/status")
+@login_required
 def api_status():
     conn = get_db()
     ais_row = conn.execute(
@@ -284,6 +329,7 @@ def api_status():
 # =============================================================================
 
 @app.route("/api/weather/latest")
+@login_required
 def api_weather_latest():
     conn = get_db()
     row = conn.execute("SELECT * FROM weather_snapshots ORDER BY collected_at DESC LIMIT 1").fetchone()
@@ -300,6 +346,7 @@ def api_weather_latest():
     })
 
 @app.route("/api/weather/forecast")
+@login_required
 def api_weather_forecast():
     conn = get_db()
     wind_rows = conn.execute(
@@ -319,6 +366,7 @@ def api_weather_forecast():
 # =============================================================================
 
 @app.route("/api/routes", methods=["GET"])
+@login_required
 def api_routes_list():
     conn = get_db()
     rows = conn.execute(
@@ -342,6 +390,7 @@ def api_routes_list():
 
 
 @app.route("/api/routes", methods=["POST"])
+@login_required
 def api_create_route():
     data = request.get_json()
     if not data:
@@ -425,6 +474,7 @@ def api_create_route():
 
 
 @app.route("/api/gpx/parse", methods=["POST"])
+@login_required
 def api_gpx_parse():
     try:
         import defusedxml.ElementTree as ET
@@ -1041,6 +1091,7 @@ def api_passage_completed_summary(route_id):
 # =============================================================================
 
 @app.route("/api/grib/index")
+@login_required
 def api_grib_index():
     index_file = GRIB_CACHE_DIR / "index.json"
     if not index_file.exists():
@@ -1060,6 +1111,7 @@ def api_grib_index():
 # =============================================================================
 
 @app.route("/api/polars", methods=["GET"])
+@login_required
 def api_polars_get():
     try:
         return jsonify(get_polar().to_dict())
@@ -1067,6 +1119,7 @@ def api_polars_get():
         return jsonify({"error": str(e)}), 500
 
 @app.route("/api/polars", methods=["PUT"])
+@login_required
 def api_polars_update():
     data = request.get_json()
     twa = data.get("twa")
@@ -1083,6 +1136,7 @@ def api_polars_update():
         return jsonify({"error": str(e)}), 500
 
 @app.route("/api/polars/reset", methods=["POST"])
+@login_required
 def api_polars_reset():
     try:
         src = BASE_DIR / "data" / "polars" / "pollen1_default.csv"
@@ -1094,6 +1148,7 @@ def api_polars_reset():
         return jsonify({"error": str(e)}), 500
 
 @app.route("/api/polars/export")
+@login_required
 def api_polars_export():
     polar_path = BASE_DIR / "data" / "polars" / "pollen1.csv"
     response = make_response(polar_path.read_text(encoding="utf-8"))
@@ -1102,6 +1157,7 @@ def api_polars_export():
     return response
 
 @app.route("/api/polars/speed")
+@login_required
 def api_polars_speed():
     try:
         twa = float(request.args.get("twa", 0))
@@ -1112,6 +1168,7 @@ def api_polars_speed():
         return jsonify({"error": str(e)}), 500
 
 @app.route("/api/polars/observations")
+@login_required
 def api_polars_observations():
     try:
         conn = get_db()
@@ -1127,6 +1184,7 @@ def api_polars_observations():
         return jsonify({"observations": [], "error": str(e)})
 
 @app.route("/api/polars/comparison")
+@login_required
 def api_polars_comparison():
     try:
         conn = get_db()
@@ -1151,6 +1209,7 @@ def api_polars_comparison():
         return jsonify({"comparison": [], "error": str(e)})
 
 @app.route("/api/polars/calibrate", methods=["POST"])
+@login_required
 def api_polars_calibrate():
     """Lance la calibration des polaires depuis les observations InReach."""
     try:
@@ -1376,6 +1435,7 @@ def api_delete_route(route_id):
 # =============================================================================
 
 @app.route("/api/passage/wind-grid")
+@login_required
 def api_passage_wind_grid():
     """Retourne une grille de vecteurs vent depuis les fichiers GRIB."""
     import json as _json
@@ -1765,6 +1825,7 @@ def build_passage_summary():
 
 
 @app.route("/api/passage/summary")
+@login_required
 def api_passage_summary():
     data = build_passage_summary()
     if not data:
@@ -1777,6 +1838,7 @@ def api_passage_summary():
 
 
 @app.route("/passage/lite")
+@login_required
 def passage_lite():
     data = build_passage_summary()
     return render_template('passage_lite.html', data=data)
@@ -1787,6 +1849,7 @@ def passage_lite():
 # =============================================================================
 
 @app.route("/accuracy")
+@login_required
 def accuracy_page():
     conn = get_db()
     try:
@@ -2012,6 +2075,7 @@ def accuracy_page():
 # =============================================================================
 
 @app.route("/api/stats")
+@login_required
 def api_stats():
     conn = get_db()
     row = conn.execute(
@@ -2035,6 +2099,7 @@ def api_stats():
     })
 
 @app.route("/api/engine/status")
+@login_required
 def api_engine_status():
     """Statut et benchmark du moteur de calcul Rust."""
     import time as _time
@@ -2080,6 +2145,7 @@ def api_engine_status():
 
 
 @app.route("/api/at-sea")
+@login_required
 def api_at_sea():
     """Détecte si le bateau est en navigation active sur une route connue."""
     conn = get_db()
@@ -2505,6 +2571,7 @@ def replay_page(route_id):
 # =============================================================================
 
 @app.route("/api/sail-configs", methods=["GET"])
+@login_required
 def api_sail_configs_list():
     conn = get_db()
     try:
@@ -2517,6 +2584,7 @@ def api_sail_configs_list():
 
 
 @app.route("/api/sail-configs", methods=["POST"])
+@login_required
 def api_sail_configs_add():
     data = request.get_json() or {}
     conn = get_db()
@@ -2690,6 +2758,7 @@ def api_sail_configs_quick_change():
 
 
 @app.route("/api/sail-observation", methods=["POST"])
+@login_required
 def api_sail_observation():
     """
     Enregistre une divergence entre config conseillée et config réelle.
@@ -2722,6 +2791,7 @@ def api_sail_observation():
 
 
 @app.route("/api/sail-preferences")
+@login_required
 def api_sail_preferences():
     """
     Calcule les seuils de recommandation voiles adaptatifs depuis l'historique
@@ -2872,11 +2942,13 @@ def _wind_dir_arrow(twd: float) -> str:
 
 
 @app.route("/quart")
+@login_required
 def quart_page():
     return render_template("quart.html")
 
 
 @app.route("/api/quart")
+@login_required
 def api_quart():
     conn = get_db()
     try:
@@ -3062,6 +3134,173 @@ def api_quart():
 
 
 # =============================================================================
+# Auth Routes
+# =============================================================================
+
+@app.route("/login", methods=["GET", "POST"])
+def login_page():
+    if current_user.is_authenticated:
+        return redirect("/")
+    if request.method == "POST":
+        data = request.form
+        username = data.get("username", "").strip().lower()
+        password = data.get("password", "")
+        conn = get_db()
+        row = conn.execute(
+            "SELECT id, username, email, boat_name, boat_type, is_admin, password_hash FROM users WHERE username=? OR email=?",
+            (username, username)
+        ).fetchone()
+        if row:
+            conn.execute("UPDATE users SET last_login=datetime('now') WHERE id=?", (row['id'],))
+            conn.commit()
+        conn.close()
+        if row and row['password_hash'] and check_password_hash(row['password_hash'], password):
+            user = User(row['id'], row['username'], row['email'], row['boat_name'], row['boat_type'], row['is_admin'])
+            login_user(user, remember=True)
+            return redirect(request.args.get("next") or "/")
+        return render_template("login.html", error="Identifiants incorrects")
+    return render_template("login.html")
+
+
+@app.route("/logout")
+@login_required
+def logout():
+    logout_user()
+    return redirect("/login")
+
+
+@app.route("/register", methods=["GET", "POST"])
+def register_page():
+    if current_user.is_authenticated:
+        return redirect("/")
+    from polar_templates import POLAR_TEMPLATES
+    if request.method == "POST":
+        data = request.form
+        username = data.get("username", "").strip().lower()
+        email = data.get("email", "").strip().lower()
+        password = data.get("password", "")
+        boat_name = data.get("boat_name", "Mon Bateau").strip()
+        boat_type = data.get("boat_type", "sloop_croisiere")
+        inreach_url = data.get("inreach_url", "").strip()
+
+        if len(password) < 8:
+            return render_template("register.html", error="Mot de passe trop court (8 car. min)", templates=POLAR_TEMPLATES)
+        if not username or not email:
+            return render_template("register.html", error="Champs requis manquants", templates=POLAR_TEMPLATES)
+
+        conn = get_db()
+        try:
+            pw_hash = generate_password_hash(password)
+            cur = conn.execute(
+                "INSERT INTO users (username, email, password_hash, boat_name, boat_type) VALUES (?,?,?,?,?)",
+                (username, email, pw_hash, boat_name, boat_type)
+            )
+            user_id = cur.lastrowid
+
+            if inreach_url:
+                conn.execute(
+                    "INSERT INTO inreach_configs (user_id, share_url) VALUES (?,?)",
+                    (user_id, inreach_url)
+                )
+
+            if boat_type in POLAR_TEMPLATES:
+                rows = POLAR_TEMPLATES[boat_type]['rows']
+                conn.executemany(
+                    "INSERT INTO polar_matrix (twa_deg, tws_kts, speed_kts, user_id) VALUES (?,?,?,?)",
+                    [(r[0], r[1], r[2], user_id) for r in rows]
+                )
+
+            conn.commit()
+            user = User(user_id, username, email, boat_name, boat_type, False)
+            login_user(user, remember=True)
+            return redirect("/")
+        except Exception as e:
+            conn.rollback()
+            if "UNIQUE" in str(e):
+                return render_template("register.html", error="Nom d'utilisateur ou email déjà utilisé", templates=POLAR_TEMPLATES)
+            return render_template("register.html", error=str(e), templates=POLAR_TEMPLATES)
+        finally:
+            conn.close()
+
+    return render_template("register.html", templates=POLAR_TEMPLATES)
+
+
+@app.route("/profile", methods=["GET", "POST"])
+@login_required
+def profile_page():
+    from polar_templates import POLAR_TEMPLATES
+    conn = get_db()
+    inreach = conn.execute(
+        "SELECT share_url, enabled, last_fetched FROM inreach_configs WHERE user_id=?",
+        (current_user.id,)
+    ).fetchone()
+
+    if request.method == "POST":
+        action = request.form.get("action")
+        if action == "update_inreach":
+            url = request.form.get("share_url", "").strip()
+            if inreach:
+                conn.execute("UPDATE inreach_configs SET share_url=? WHERE user_id=?", (url, current_user.id))
+            else:
+                conn.execute("INSERT INTO inreach_configs (user_id, share_url) VALUES (?,?)", (current_user.id, url))
+            conn.commit()
+        elif action == "update_boat":
+            boat_name = request.form.get("boat_name", "").strip()
+            conn.execute("UPDATE users SET boat_name=? WHERE id=?", (boat_name, current_user.id))
+            conn.commit()
+        elif action == "change_password":
+            old_pw = request.form.get("old_password", "")
+            new_pw = request.form.get("new_password", "")
+            row = conn.execute("SELECT password_hash FROM users WHERE id=?", (current_user.id,)).fetchone()
+            if row and check_password_hash(row['password_hash'], old_pw) and len(new_pw) >= 8:
+                conn.execute("UPDATE users SET password_hash=? WHERE id=?",
+                             (generate_password_hash(new_pw), current_user.id))
+                conn.commit()
+        conn.close()
+        return redirect("/profile")
+
+    conn.close()
+    return render_template("profile.html", user=current_user, inreach=inreach, templates=POLAR_TEMPLATES)
+
+
+@app.route("/fleet")
+@login_required
+def fleet_page():
+    if not current_user.is_admin:
+        return redirect("/")
+    conn = get_db()
+    boats = conn.execute("""
+        SELECT u.id, u.username, u.boat_name, u.boat_type,
+               p.latitude, p.longitude, p.timestamp, p.speed_knots, p.course
+        FROM users u
+        LEFT JOIN positions p ON p.user_id = u.id
+            AND p.timestamp = (SELECT MAX(p2.timestamp) FROM positions p2 WHERE p2.user_id=u.id)
+        ORDER BY u.id
+    """).fetchall()
+    conn.close()
+    return render_template("fleet.html", boats=[dict(b) for b in boats], current_user=current_user)
+
+
+@app.route("/api/set-sam-password", methods=["POST"])
+def set_sam_password():
+    """One-time endpoint for Sam to set his admin password."""
+    data = request.get_json() or {}
+    password = data.get("password", "")
+    secret = data.get("secret", "")
+    if secret != "pollen_setup_2024":
+        return jsonify({"error": "Non autorisé"}), 403
+    if len(password) < 8:
+        return jsonify({"error": "Mot de passe trop court"}), 400
+    conn = get_db()
+    conn.execute("UPDATE users SET password_hash=? WHERE username='sam'",
+                 (generate_password_hash(password),))
+    conn.commit()
+    conn.close()
+    return jsonify({"ok": True, "message": "Mot de passe Sam mis à jour"})
+
+
+
+# =============================================================================
 # Init DB
 # =============================================================================
 
@@ -3244,6 +3483,76 @@ def init_db():
         c.execute("ALTER TABLE polar_observations ADD COLUMN sail_config_id INTEGER")
     except Exception:
         pass
+
+    # ── Tables auth multi-utilisateur ──
+    c.executescript("""
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL UNIQUE,
+            email TEXT NOT NULL UNIQUE,
+            password_hash TEXT,
+            boat_name TEXT NOT NULL DEFAULT 'Mon Bateau',
+            boat_type TEXT DEFAULT 'sloop_croisiere',
+            is_admin INTEGER DEFAULT 0,
+            created_at TEXT DEFAULT (datetime('now')),
+            last_login TEXT
+        );
+        CREATE TABLE IF NOT EXISTS inreach_configs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL UNIQUE,
+            share_url TEXT NOT NULL,
+            feed_password TEXT,
+            enabled INTEGER DEFAULT 1,
+            last_fetched TEXT,
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        );
+        CREATE TABLE IF NOT EXISTS polar_matrix (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            twa_deg REAL NOT NULL,
+            tws_kts REAL NOT NULL,
+            speed_kts REAL NOT NULL,
+            user_id INTEGER
+        );
+    """)
+
+    # ── Ajouter user_id aux tables existantes ──
+    for table in ['positions', 'sail_config_periods', 'polar_observations',
+                   'logbook_entries', 'passage_routes', 'sail_config_observations',
+                   'model_accuracy', 'polar_matrix']:
+        try:
+            c.execute(f"ALTER TABLE {table} ADD COLUMN user_id INTEGER")
+        except Exception:
+            pass
+    try:
+        c.execute("CREATE INDEX IF NOT EXISTS idx_polar_matrix_user ON polar_matrix(user_id, twa_deg, tws_kts)")
+    except Exception:
+        pass
+
+    # ── Créer Sam comme admin si inexistant ──
+    sam_exists = c.execute("SELECT id FROM users WHERE username='sam'").fetchone()
+    if not sam_exists:
+        c.execute("""
+            INSERT INTO users (username, email, boat_name, boat_type, is_admin)
+            VALUES ('sam', 'samuelvisoko@gmail.com', 'POLLEN 1', 'sloop_croisiere', 1)
+        """)
+
+    # ── Migrer les données existantes vers user_id=1 (Sam) ──
+    sam_row = c.execute("SELECT id FROM users WHERE username='sam'").fetchone()
+    if sam_row:
+        sam_id = sam_row[0]
+        for table in ['positions', 'sail_config_periods', 'polar_observations',
+                       'logbook_entries', 'passage_routes', 'sail_config_observations',
+                       'model_accuracy']:
+            try:
+                c.execute(f"UPDATE {table} SET user_id={sam_id} WHERE user_id IS NULL")
+            except Exception:
+                pass
+        # Migrer polar_matrix existant (sans user_id)
+        try:
+            c.execute(f"UPDATE polar_matrix SET user_id={sam_id} WHERE user_id IS NULL")
+        except Exception:
+            pass
+
     conn.commit()
     conn.close()
 

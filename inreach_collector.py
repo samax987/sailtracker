@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-inreach_collector.py — Collecteur de positions Garmin InReach via MapShare KML.
+inreach_collector.py — Collecteur multi-utilisateur de positions Garmin InReach via MapShare KML.
 Tourne en cron toutes les 10 minutes.
 """
 
@@ -9,8 +9,9 @@ import os
 import sqlite3
 import time
 import xml.etree.ElementTree as ET
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
+from urllib.parse import urlparse, urlencode, urlunparse, parse_qs
 
 import requests
 
@@ -29,7 +30,6 @@ BASE_DIR = Path(__file__).parent
 load_dotenv(BASE_DIR / ".env")
 
 DB_PATH = BASE_DIR / "sailtracker.db"
-INREACH_KML_URL = os.getenv("INREACH_KML_URL", "")
 REQUEST_TIMEOUT = 30
 
 # =============================================================================
@@ -163,24 +163,31 @@ def parse_kml(kml_text: str) -> list[dict]:
 # Base de données
 # =============================================================================
 
-def get_last_inreach_timestamp(conn: sqlite3.Connection) -> str | None:
-    """Retourne le timestamp de la dernière position InReach en base."""
+def get_db() -> sqlite3.Connection:
+    conn = sqlite3.connect(DB_PATH, timeout=10)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def get_last_inreach_timestamp(conn: sqlite3.Connection, user_id: int) -> str | None:
+    """Retourne le timestamp de la dernière position InReach pour cet utilisateur."""
     row = conn.execute(
-        "SELECT MAX(timestamp) FROM positions WHERE source = 'inreach'"
+        "SELECT MAX(timestamp) FROM positions WHERE source = 'inreach' AND user_id = ?",
+        (user_id,)
     ).fetchone()
     return row[0] if row else None
 
 
-def insert_positions(conn: sqlite3.Connection, positions: list[dict]) -> int:
-    """Insère les positions dans la table positions. Retourne le nombre d'insertions."""
+def insert_positions(conn: sqlite3.Connection, positions: list[dict], user_id: int) -> int:
+    """Insère les positions dans la table positions avec user_id. Retourne le nombre d'insertions."""
     inserted = 0
     for pos in positions:
         try:
             conn.execute(
                 """
                 INSERT INTO positions
-                    (timestamp, latitude, longitude, speed_knots, course, heading, nav_status, source)
-                VALUES (?, ?, ?, ?, ?, NULL, NULL, ?)
+                    (timestamp, latitude, longitude, speed_knots, course, heading, nav_status, source, user_id)
+                VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?)
                 """,
                 (
                     pos["timestamp"],
@@ -189,6 +196,7 @@ def insert_positions(conn: sqlite3.Connection, positions: list[dict]) -> int:
                     pos["speed_knots"],
                     pos["course"],
                     pos["source"],
+                    user_id,
                 ),
             )
             inserted += 1
@@ -199,44 +207,39 @@ def insert_positions(conn: sqlite3.Connection, positions: list[dict]) -> int:
 
 
 # =============================================================================
-# Main
+# Collecte pour un utilisateur
 # =============================================================================
 
-def main():
-    if not INREACH_KML_URL:
-        logger.error("INREACH_KML_URL non configuré dans .env — arrêt.")
-        return
+def collect_for_user(user_id: int, share_url: str, feed_password: str | None,
+                     username: str = "?", boat_name: str = "?"):
+    """Collecte les positions InReach pour un utilisateur donné."""
+    logger.info("=== Collecte pour %s (%s) user_id=%d ===", boat_name, username, user_id)
 
-    # Connexion DB (avant le fetch pour construire la date d1)
-    conn = sqlite3.connect(DB_PATH, timeout=10)
-    last_ts = get_last_inreach_timestamp(conn)
-    logger.info("Dernière position InReach en base : %s", last_ts or "aucune")
+    conn = get_db()
+    last_ts = get_last_inreach_timestamp(conn, user_id)
+    logger.info("Dernière position en base : %s", last_ts or "aucune")
 
-    # Construire l'URL avec les paramètres de date pour récupérer l'historique
-    # Garmin MapShare accepte d1=YYYY-MM-DDTHH:MM:SSZ et d2=YYYY-MM-DDTHH:MM:SSZ
-    from urllib.parse import urlparse, urlencode, urlunparse, parse_qs
-    from datetime import timedelta
-
+    # Construire l'URL avec les paramètres de date
     if last_ts:
-        # Demander depuis last_ts - 1h (marge pour les positions en double)
         try:
             d1_dt = datetime.fromisoformat(last_ts) - timedelta(hours=1)
         except Exception:
             d1_dt = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=7)
     else:
-        # Première fois : récupérer 30 jours d'historique
         d1_dt = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=30)
 
     d1_str = d1_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
     d2_str = datetime.now(timezone.utc).replace(tzinfo=None).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    parsed = urlparse(INREACH_KML_URL)
+    parsed = urlparse(share_url)
     params = parse_qs(parsed.query)
     params["d1"] = [d1_str]
     params["d2"] = [d2_str]
+    if feed_password:
+        params["password"] = [feed_password]
     kml_url = urlunparse(parsed._replace(query=urlencode(params, doseq=True)))
 
-    logger.info("Collecte InReach depuis : %s (d1=%s)", INREACH_KML_URL, d1_str)
+    logger.info("Collecte InReach depuis : %s (d1=%s)", share_url, d1_str)
 
     # Télécharger le KML
     try:
@@ -244,7 +247,7 @@ def main():
         resp.raise_for_status()
         kml_text = resp.text
     except requests.RequestException as e:
-        logger.error("Erreur HTTP lors de la collecte KML : %s", e)
+        logger.error("Erreur HTTP lors de la collecte KML user_id=%d : %s", user_id, e)
         conn.close()
         return
 
@@ -256,19 +259,24 @@ def main():
 
     if not positions:
         logger.info("Aucune position à traiter.")
+        # Mettre à jour last_fetched
+        conn.execute(
+            "UPDATE inreach_configs SET last_fetched=datetime('now') WHERE user_id=?",
+            (user_id,)
+        )
+        conn.commit()
         conn.close()
         return
 
-    # Filtrer les doublons par rapport à la dernière position en base
+    # Filtrer les doublons
     if last_ts:
         positions = [p for p in positions if p["timestamp"] > last_ts]
 
     logger.info("%d nouvelles positions à insérer", len(positions))
 
     if positions:
-        inserted = insert_positions(conn, positions)
-        logger.info("%d positions insérées", inserted)
-        # Afficher la dernière position
+        inserted = insert_positions(conn, positions, user_id)
+        logger.info("%d positions insérées pour user_id=%d", inserted, user_id)
         last = positions[-1]
         logger.info(
             "Dernière position : %s — lat=%.6f lon=%.6f spd=%s cap=%s",
@@ -279,9 +287,52 @@ def main():
             f"{last['course']:.0f}°" if last["course"] is not None else "—",
         )
     else:
-        logger.info("Aucune nouvelle position à insérer.")
+        logger.info("Aucune nouvelle position à insérer pour user_id=%d.", user_id)
 
+    # Mettre à jour last_fetched
+    conn.execute(
+        "UPDATE inreach_configs SET last_fetched=datetime('now') WHERE user_id=?",
+        (user_id,)
+    )
+    conn.commit()
     conn.close()
+
+
+# =============================================================================
+# Main
+# =============================================================================
+
+def main():
+    conn = get_db()
+    try:
+        configs = conn.execute(
+            "SELECT ic.id, ic.user_id, ic.share_url, ic.feed_password, u.username, u.boat_name "
+            "FROM inreach_configs ic JOIN users u ON ic.user_id=u.id WHERE ic.enabled=1"
+        ).fetchall()
+    except Exception as e:
+        logger.error("Erreur lecture inreach_configs (table peut-être absente) : %s", e)
+        configs = []
+    conn.close()
+
+    if not configs:
+        # Rétro-compatibilité : lire l'URL depuis .env pour user_id=1
+        url = os.getenv("INREACH_KML_URL", "")
+        if url:
+            logger.info("Pas de config DB, utilisation de INREACH_KML_URL (user_id=1)")
+            collect_for_user(user_id=1, share_url=url, feed_password=None,
+                             username="sam", boat_name="POLLEN 1")
+        else:
+            logger.error("INREACH_KML_URL non configuré et aucune config DB — arrêt.")
+        return
+
+    for cfg in configs:
+        collect_for_user(
+            user_id=cfg['user_id'],
+            share_url=cfg['share_url'],
+            feed_password=cfg['feed_password'],
+            username=cfg['username'],
+            boat_name=cfg['boat_name'],
+        )
 
 
 if __name__ == "__main__":

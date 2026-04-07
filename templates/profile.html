@@ -1,0 +1,156 @@
+{% extends "base.html" %}
+{% block title %}Mon profil — SailTracker{% endblock %}
+{% block nav_tracker %}{% endblock %}
+
+{% block head_styles %}
+<style>
+  .profile-page { max-width: 600px; margin: 32px auto; padding: 0 16px 60px; }
+  .section-card {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px 22px;
+    margin-bottom: 20px;
+  }
+  .section-card h2 {
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: var(--accent-info);
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    margin-bottom: 16px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  .form-group { margin-bottom: 14px; }
+  .form-group label {
+    display: block;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    margin-bottom: 5px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .form-group input {
+    width: 100%;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 12px;
+    color: var(--text-primary);
+    font-size: 0.9rem;
+    font-family: var(--font);
+    outline: none;
+    transition: border-color 0.2s;
+  }
+  .form-group input:focus { border-color: var(--accent-info); }
+  .helper { font-size: 0.75rem; color: var(--text-muted); margin-top: 3px; }
+  .btn-save {
+    background: rgba(96,165,250,0.15);
+    border: 1px solid rgba(96,165,250,0.35);
+    border-radius: 6px;
+    padding: 7px 18px;
+    color: var(--accent-info);
+    font-size: 0.82rem;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: var(--font);
+    transition: background 0.2s;
+  }
+  .btn-save:hover { background: rgba(96,165,250,0.25); }
+  .status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 10px;
+    border-radius: 20px;
+    font-size: 0.75rem;
+    font-weight: 600;
+  }
+  .badge-ok { background: rgba(74,222,128,0.12); color: var(--accent-good); border: 1px solid rgba(74,222,128,0.3); }
+  .badge-warn { background: rgba(251,191,36,0.12); color: var(--accent-warn); border: 1px solid rgba(251,191,36,0.3); }
+  .meta-row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+  .nav-back { font-size: 0.8rem; color: var(--text-muted); display: block; margin-bottom: 20px; }
+  .nav-back a { color: var(--accent-info); text-decoration: none; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="profile-page">
+  <div class="nav-back"><a href="/">&larr; Retour au tracker</a></div>
+
+  <div class="meta-row">
+    <h1 style="font-size:1.3rem;font-weight:700;color:var(--accent-wind)">Profil — {{ user.username }}</h1>
+    {% if user.is_admin %}
+    <span class="status-badge badge-ok">Admin</span>
+    {% endif %}
+  </div>
+
+  <!-- Mon bateau -->
+  <div class="section-card">
+    <h2>Mon bateau</h2>
+    <form method="POST" action="/profile">
+      <input type="hidden" name="action" value="update_boat">
+      <div class="form-group">
+        <label>Nom du bateau</label>
+        <input type="text" name="boat_name" value="{{ user.boat_name }}" placeholder="POLLEN 1">
+      </div>
+      <div style="display:flex;gap:10px;align-items:center">
+        <button type="submit" class="btn-save">Enregistrer</button>
+        <span style="font-size:0.78rem;color:var(--text-muted)">Type : {{ user.boat_type or '—' }}</span>
+      </div>
+    </form>
+  </div>
+
+  <!-- InReach -->
+  <div class="section-card">
+    <h2>Suivi GPS — Garmin InReach</h2>
+    {% if inreach %}
+    <div class="meta-row" style="margin-bottom:14px">
+      <span class="status-badge {% if inreach.enabled %}badge-ok{% else %}badge-warn{% endif %}">
+        {% if inreach.enabled %}Actif{% else %}Désactivé{% endif %}
+      </span>
+      {% if inreach.last_fetched %}
+      <span style="font-size:0.78rem;color:var(--text-muted)">Dernière collecte : {{ inreach.last_fetched[:16] }}</span>
+      {% else %}
+      <span style="font-size:0.78rem;color:var(--text-muted)">Jamais collecté</span>
+      {% endif %}
+    </div>
+    {% endif %}
+    <form method="POST" action="/profile">
+      <input type="hidden" name="action" value="update_inreach">
+      <div class="form-group">
+        <label>URL MapShare</label>
+        <input type="url" name="share_url" value="{{ inreach.share_url if inreach else '' }}"
+               placeholder="https://share.garmin.com/VOTREIDENTIFIANT">
+        <div class="helper">Format : https://share.garmin.com/XXXX</div>
+      </div>
+      <button type="submit" class="btn-save">Enregistrer</button>
+    </form>
+  </div>
+
+  <!-- Changer mot de passe -->
+  <div class="section-card">
+    <h2>Sécurité</h2>
+    <form method="POST" action="/profile">
+      <input type="hidden" name="action" value="change_password">
+      <div class="form-group">
+        <label>Mot de passe actuel</label>
+        <input type="password" name="old_password" placeholder="••••••••" autocomplete="current-password">
+      </div>
+      <div class="form-group">
+        <label>Nouveau mot de passe</label>
+        <input type="password" name="new_password" placeholder="Minimum 8 caractères" autocomplete="new-password">
+      </div>
+      <button type="submit" class="btn-save">Changer le mot de passe</button>
+    </form>
+  </div>
+
+  <div style="text-align:center;margin-top:16px">
+    <a href="/logout" style="font-size:0.82rem;color:var(--accent-danger);text-decoration:none">
+      Se déconnecter
+    </a>
+  </div>
+</div>
+{% endblock %}

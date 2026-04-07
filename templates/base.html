@@ -70,6 +70,15 @@
   <a href="/accuracy" class="nav-link {% block nav_accuracy %}{% endblock %}">Modèles</a>
   <a href="/polars" class="nav-link {% block nav_polars %}{% endblock %}">Polaires</a>
   <a href="/quart" class="nav-link {% block nav_quart %}{% endblock %}" style="background:rgba(59,158,255,.12);border:1px solid rgba(59,158,255,.3)">⚓ Quart</a>
+  <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
+    {% if current_user and current_user.is_authenticated %}
+      {% if current_user.is_admin %}
+      <a href="/fleet" class="nav-link">Flotte</a>
+      {% endif %}
+      <a href="/profile" class="nav-link" style="color:var(--accent-wind);background:rgba(125,211,252,0.08);border:1px solid rgba(125,211,252,0.2)">{{ current_user.boat_name }}</a>
+      <a href="/logout" class="nav-link" style="color:var(--text-muted);font-size:0.75rem">Déco</a>
+    {% endif %}
+  </div>
 </nav>
 
 {% block content %}{% endblock %}

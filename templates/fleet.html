@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+{% block title %}Flotte — SailTracker Admin{% endblock %}
+
+{% block head_styles %}
+<style>
+  .fleet-page { max-width: 900px; margin: 32px auto; padding: 0 16px 60px; }
+  .page-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 24px;
+  }
+  .page-header h1 { font-size: 1.3rem; font-weight: 700; color: var(--accent-wind); }
+  .admin-badge {
+    background: rgba(251,191,36,0.12);
+    border: 1px solid rgba(251,191,36,0.3);
+    color: var(--accent-warn);
+    font-size: 0.72rem;
+    font-weight: 700;
+    padding: 3px 10px;
+    border-radius: 20px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .fleet-table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  .fleet-table th {
+    background: var(--bg-tertiary);
+    padding: 10px 14px;
+    text-align: left;
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    border-bottom: 1px solid var(--border);
+  }
+  .fleet-table td {
+    padding: 12px 14px;
+    font-size: 0.85rem;
+    color: var(--text-primary);
+    border-bottom: 1px solid rgba(45,74,122,0.4);
+    vertical-align: middle;
+  }
+  .fleet-table tr:last-child td { border-bottom: none; }
+  .fleet-table tr:hover td { background: rgba(59,158,255,0.04); }
+  .boat-name { font-weight: 700; color: var(--accent-wind); }
+  .username { font-size: 0.78rem; color: var(--text-muted); margin-top: 2px; }
+  .pos-coord { font-family: monospace; font-size: 0.82rem; }
+  .age-fresh { color: var(--accent-good); }
+  .age-stale { color: var(--accent-warn); }
+  .age-old { color: var(--accent-danger); }
+  .no-data { color: var(--text-muted); font-style: italic; }
+  .speed-badge {
+    background: rgba(96,165,250,0.12);
+    border: 1px solid rgba(96,165,250,0.25);
+    color: var(--accent-info);
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    font-family: monospace;
+  }
+  .nav-back { font-size: 0.8rem; color: var(--text-muted); display: block; margin-bottom: 20px; }
+  .nav-back a { color: var(--accent-info); text-decoration: none; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="fleet-page">
+  <div class="nav-back"><a href="/">&larr; Retour au tracker</a></div>
+  <div class="page-header">
+    <h1>Vue flotte</h1>
+    <span class="admin-badge">Admin</span>
+    <span style="font-size:0.82rem;color:var(--text-muted)">{{ boats|length }} bateau(x)</span>
+  </div>
+
+  {% if boats %}
+  <table class="fleet-table">
+    <thead>
+      <tr>
+        <th>Bateau</th>
+        <th>Dernière position</th>
+        <th>Coordonnées</th>
+        <th>Vitesse</th>
+        <th>Cap</th>
+        <th>Age</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for boat in boats %}
+      <tr>
+        <td>
+          <div class="boat-name">{{ boat.boat_name or '—' }}</div>
+          <div class="username">@{{ boat.username }}</div>
+        </td>
+        <td>
+          {% if boat.timestamp %}
+          <span style="font-size:0.82rem">{{ boat.timestamp[:16].replace('T', ' ') }}</span>
+          {% else %}
+          <span class="no-data">Aucune position</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if boat.latitude %}
+          <span class="pos-coord">{{ "%.4f"|format(boat.latitude) }}, {{ "%.4f"|format(boat.longitude) }}</span>
+          {% else %}
+          <span class="no-data">—</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if boat.speed_knots is not none and boat.speed_knots is not none %}
+          <span class="speed-badge">{{ "%.1f"|format(boat.speed_knots) }} kn</span>
+          {% else %}
+          <span class="no-data">—</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if boat.course %}
+          {{ "%.0f"|format(boat.course) }}°
+          {% else %}
+          <span class="no-data">—</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if boat.timestamp %}
+            {% set ts_str = boat.timestamp %}
+            <span class="age-stale" title="{{ ts_str }}">—</span>
+          {% else %}
+          <span class="no-data">—</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div style="text-align:center;padding:40px;color:var(--text-muted)">
+    Aucun utilisateur enregistré.
+  </div>
+  {% endif %}
+</div>
+{% endblock %}
