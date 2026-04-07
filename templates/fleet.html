@@ -2,72 +2,44 @@
 {% block title %}Flotte — SailTracker Admin{% endblock %}
 
 {% block head_styles %}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <style>
-  .fleet-page { max-width: 900px; margin: 32px auto; padding: 0 16px 60px; }
-  .page-header {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin-bottom: 24px;
-  }
-  .page-header h1 { font-size: 1.3rem; font-weight: 700; color: var(--accent-wind); }
-  .admin-badge {
-    background: rgba(251,191,36,0.12);
-    border: 1px solid rgba(251,191,36,0.3);
-    color: var(--accent-warn);
-    font-size: 0.72rem;
-    font-weight: 700;
-    padding: 3px 10px;
-    border-radius: 20px;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-  }
-  .fleet-table {
-    width: 100%;
-    border-collapse: collapse;
-    background: var(--bg-secondary);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    overflow: hidden;
-  }
-  .fleet-table th {
-    background: var(--bg-tertiary);
-    padding: 10px 14px;
-    text-align: left;
-    font-size: 0.72rem;
-    font-weight: 700;
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    border-bottom: 1px solid var(--border);
-  }
-  .fleet-table td {
-    padding: 12px 14px;
-    font-size: 0.85rem;
-    color: var(--text-primary);
-    border-bottom: 1px solid rgba(45,74,122,0.4);
-    vertical-align: middle;
-  }
-  .fleet-table tr:last-child td { border-bottom: none; }
-  .fleet-table tr:hover td { background: rgba(59,158,255,0.04); }
-  .boat-name { font-weight: 700; color: var(--accent-wind); }
-  .username { font-size: 0.78rem; color: var(--text-muted); margin-top: 2px; }
-  .pos-coord { font-family: monospace; font-size: 0.82rem; }
-  .age-fresh { color: var(--accent-good); }
-  .age-stale { color: var(--accent-warn); }
-  .age-old { color: var(--accent-danger); }
-  .no-data { color: var(--text-muted); font-style: italic; }
-  .speed-badge {
-    background: rgba(96,165,250,0.12);
-    border: 1px solid rgba(96,165,250,0.25);
-    color: var(--accent-info);
-    padding: 2px 8px;
-    border-radius: 4px;
-    font-size: 0.8rem;
-    font-family: monospace;
-  }
-  .nav-back { font-size: 0.8rem; color: var(--text-muted); display: block; margin-bottom: 20px; }
-  .nav-back a { color: var(--accent-info); text-decoration: none; }
+  .fleet-page { max-width: 1100px; margin: 24px auto; padding: 0 16px 60px; }
+  .page-header { display:flex; align-items:center; gap:12px; margin-bottom:16px; }
+  .page-header h1 { font-size:1.2rem; font-weight:700; color:var(--accent-wind); }
+  .admin-badge { background:rgba(251,191,36,.12); border:1px solid rgba(251,191,36,.3);
+    color:var(--accent-warn); font-size:.72rem; font-weight:700; padding:3px 10px;
+    border-radius:20px; text-transform:uppercase; letter-spacing:.06em; }
+  #fleet-map { height:380px; border-radius:10px; border:1px solid var(--border);
+    margin-bottom:20px; background:#060d18; }
+  .fleet-table { width:100%; border-collapse:collapse; background:var(--bg-secondary);
+    border:1px solid var(--border); border-radius:10px; overflow:hidden; }
+  .fleet-table th { background:var(--bg-tertiary); padding:9px 14px; text-align:left;
+    font-size:.72rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;
+    letter-spacing:.06em; border-bottom:1px solid var(--border); }
+  .fleet-table td { padding:11px 14px; font-size:.84rem; color:var(--text-primary);
+    border-bottom:1px solid rgba(45,74,122,.4); vertical-align:middle; }
+  .fleet-table tr:last-child td { border-bottom:none; }
+  .fleet-table tr:hover td { background:rgba(59,158,255,.04); }
+  .boat-name { font-weight:700; color:var(--accent-wind); }
+  .username  { font-size:.76rem; color:var(--text-muted); margin-top:2px; }
+  .type-badge { font-size:.68rem; padding:2px 7px; border-radius:4px;
+    font-weight:600; border:1px solid; }
+  .pos-coord { font-family:monospace; font-size:.8rem; }
+  .speed-badge { background:rgba(96,165,250,.12); border:1px solid rgba(96,165,250,.25);
+    color:var(--accent-info); padding:2px 8px; border-radius:4px;
+    font-size:.8rem; font-family:monospace; }
+  .no-data { color:var(--text-muted); font-style:italic; }
+  .age-pill { font-size:.72rem; padding:2px 8px; border-radius:10px; font-weight:600; }
+  .age-fresh { background:rgba(45,222,130,.12); border:1px solid rgba(45,222,130,.3); color:#2dde82; }
+  .age-stale { background:rgba(255,187,51,.1);  border:1px solid rgba(255,187,51,.35); color:#ffbb33; }
+  .age-old   { background:rgba(255,85,85,.1);   border:1px solid rgba(255,85,85,.3);  color:#ff5555; }
+  .nav-back  { font-size:.8rem; color:var(--text-muted); display:block; margin-bottom:16px; }
+  .nav-back a { color:var(--accent-info); text-decoration:none; }
+  .fleet-boat-icon  { text-align:center; line-height:1; }
+  .fleet-boat-emoji { display:block; }
+  .fleet-boat-label { display:block; font-size:9px; font-weight:700; color:#fff;
+    text-shadow:0 0 4px #000, 0 0 4px #000; white-space:nowrap; margin-top:1px; }
 </style>
 {% endblock %}
 
@@ -77,22 +49,27 @@
   <div class="page-header">
     <h1>Vue flotte</h1>
     <span class="admin-badge">Admin</span>
-    <span style="font-size:0.82rem;color:var(--text-muted)">{{ boats|length }} bateau(x)</span>
+    <span style="font-size:.82rem;color:var(--text-muted)">{{ boats|length }} bateau(x)</span>
   </div>
+
+  <div id="fleet-map"></div>
 
   {% if boats %}
   <table class="fleet-table">
     <thead>
       <tr>
-        <th>Bateau</th>
-        <th>Dernière position</th>
-        <th>Coordonnées</th>
-        <th>Vitesse</th>
-        <th>Cap</th>
-        <th>Age</th>
+        <th>Bateau</th><th>Type</th><th>Coordonnées</th>
+        <th>Vitesse</th><th>Cap</th><th>Dernière position</th>
       </tr>
     </thead>
     <tbody>
+      {% set type_labels = {
+        'sloop_croisiere':   ('Sloop',  '#3b9eff'),
+        'catamaran':         ('Cata',   '#2dde82'),
+        'ketch':             ('Ketch',  '#c4b5fd'),
+        'sloop_performance': ('Perf',   '#ffbb33'),
+        'grand_croiseur':    ('Lourd',  '#ff8855'),
+      } %}
       {% for boat in boats %}
       <tr>
         <td>
@@ -100,49 +77,86 @@
           <div class="username">@{{ boat.username }}</div>
         </td>
         <td>
-          {% if boat.timestamp %}
-          <span style="font-size:0.82rem">{{ boat.timestamp[:16].replace('T', ' ') }}</span>
-          {% else %}
-          <span class="no-data">Aucune position</span>
-          {% endif %}
+          {% set tl = type_labels.get(boat.boat_type, ('?', '#888888')) %}
+          <span class="type-badge" style="color:{{ tl[1] }};border-color:{{ tl[1] }}40">{{ tl[0] }}</span>
         </td>
         <td>
           {% if boat.latitude %}
           <span class="pos-coord">{{ "%.4f"|format(boat.latitude) }}, {{ "%.4f"|format(boat.longitude) }}</span>
-          {% else %}
-          <span class="no-data">—</span>
-          {% endif %}
+          {% else %}<span class="no-data">—</span>{% endif %}
         </td>
         <td>
-          {% if boat.speed_knots is not none and boat.speed_knots is not none %}
+          {% if boat.speed_knots is not none %}
           <span class="speed-badge">{{ "%.1f"|format(boat.speed_knots) }} kn</span>
-          {% else %}
-          <span class="no-data">—</span>
-          {% endif %}
+          {% else %}<span class="no-data">—</span>{% endif %}
         </td>
         <td>
-          {% if boat.course %}
-          {{ "%.0f"|format(boat.course) }}°
-          {% else %}
-          <span class="no-data">—</span>
-          {% endif %}
+          {% if boat.course %}{{ "%.0f"|format(boat.course) }}°
+          {% else %}<span class="no-data">—</span>{% endif %}
         </td>
         <td>
           {% if boat.timestamp %}
-            {% set ts_str = boat.timestamp %}
-            <span class="age-stale" title="{{ ts_str }}">—</span>
-          {% else %}
-          <span class="no-data">—</span>
-          {% endif %}
+          <span class="age-pill age-stale" data-ts="{{ boat.timestamp }}">—</span>
+          {% else %}<span class="no-data">Aucune</span>{% endif %}
         </td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
   {% else %}
-  <div style="text-align:center;padding:40px;color:var(--text-muted)">
-    Aucun utilisateur enregistré.
-  </div>
+  <div style="text-align:center;padding:40px;color:var(--text-muted)">Aucun utilisateur enregistré.</div>
   {% endif %}
 </div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const FLEET_CFG = {
+  sloop_croisiere:    { emoji: '⛵',      glow: '#3b9eff' },
+  catamaran:          { emoji: '⛵\u2006⛵', glow: '#2dde82', fs: '13px' },
+  ketch:              { emoji: '⛵',      glow: '#c4b5fd' },
+  sloop_performance:  { emoji: '⛵',      glow: '#ffbb33', tilt: true },
+  grand_croiseur:     { emoji: '⛵',      glow: '#ff8855', fs: '26px' },
+};
+
+function makeFleetIcon(boatName, boatType) {
+  const cfg  = FLEET_CFG[boatType] || FLEET_CFG['sloop_croisiere'];
+  const fs   = cfg.fs   || '22px';
+  const glow = 'drop-shadow(0 0 6px ' + cfg.glow + ')';
+  const trns = cfg.tilt ? 'transform:rotate(-12deg);display:inline-block;' : '';
+  const html = '<div class="fleet-boat-icon">'
+    + '<span class="fleet-boat-emoji" style="font-size:' + fs + ';filter:' + glow + ';' + trns + '">' + cfg.emoji + '</span>'
+    + '<span class="fleet-boat-label">' + boatName + '</span>'
+    + '</div>';
+  return L.divIcon({ html: html, iconSize: [56, 40], iconAnchor: [28, 20], className: '' });
+}
+
+const boats = {{ boats | tojson }};
+const fleetMap = L.map('fleet-map', { zoomControl: true });
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+  attribution: '&copy; OpenStreetMap &copy; CARTO', maxZoom: 18,
+}).addTo(fleetMap);
+
+const bounds = [];
+boats.forEach(function(b) {
+  if (b.latitude == null) return;
+  const icon = makeFleetIcon(b.boat_name || b.username, b.boat_type || 'sloop_croisiere');
+  const m = L.marker([b.latitude, b.longitude], { icon: icon }).addTo(fleetMap);
+  const sog = b.speed_knots != null ? b.speed_knots.toFixed(1) + ' kn' : '—';
+  const cog = b.course != null ? Math.round(b.course) + '°' : '—';
+  const ts  = b.timestamp ? b.timestamp.slice(0,16).replace('T',' ') + ' UTC' : 'Aucune position';
+  m.bindPopup('<b>' + (b.boat_name || b.username) + '</b><br>@' + b.username + '<br>' + sog + ' · ' + cog + '<br><small>' + ts + '</small>');
+  bounds.push([b.latitude, b.longitude]);
+});
+
+if      (bounds.length === 1) { fleetMap.setView(bounds[0], 8); }
+else if (bounds.length  >  1) { fleetMap.fitBounds(bounds, { padding: [50, 50] }); }
+else                          { fleetMap.setView([20, -35], 4); }
+
+document.querySelectorAll('.age-pill[data-ts]').forEach(function(el) {
+  const mn = Math.floor((Date.now() - new Date(el.dataset.ts.replace(' ','T') + 'Z')) / 60000);
+  if      (mn < 60)  { el.textContent = mn + ' min';           el.className = 'age-pill age-fresh'; }
+  else if (mn < 360) { el.textContent = Math.floor(mn/60) + 'h'; el.className = 'age-pill age-stale'; }
+  else               { el.textContent = Math.floor(mn/60) + 'h'; el.className = 'age-pill age-old'; }
+});
+</script>
 {% endblock %}

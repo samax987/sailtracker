@@ -3263,6 +3263,17 @@ def profile_page():
     return render_template("profile.html", user=current_user, inreach=inreach, templates=POLAR_TEMPLATES)
 
 
+@app.route("/api/me")
+@login_required
+def api_me():
+    return jsonify({
+        "username": current_user.username,
+        "boat_name": current_user.boat_name,
+        "boat_type": current_user.boat_type,
+        "is_admin": current_user.is_admin,
+    })
+
+
 @app.route("/fleet")
 @login_required
 def fleet_page():

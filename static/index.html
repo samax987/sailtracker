@@ -668,6 +668,15 @@ const STALE_THRESHOLD_MIN  = 180;  // Données périmées
 // État global
 // =============================================================================
 let map, boatMarker, trackPolyline, seamapLayer;
+let myBoatName = 'POLLEN';
+let myBoatType  = 'sloop_croisiere';
+const BOAT_TYPE_CFG = {
+  sloop_croisiere:    { emoji: '⛵', glow: '#3b9eff' },
+  catamaran:          { emoji: '⛵\u2006⛵', glow: '#2dde82', fs: '14px' },
+  ketch:              { emoji: '⛵', glow: '#c4b5fd' },
+  sloop_performance:  { emoji: '⛵', glow: '#ffbb33', tilt: true },
+  grand_croiseur:     { emoji: '⛵', glow: '#ff8855', fs: '28px' },
+};
 let lastPosition = null;
 let trackHours = 72;
 let weatherVisible = true;
@@ -724,15 +733,20 @@ function initMap() {
 // =============================================================================
 // Icône voilier SVG orientée selon le cap
 // =============================================================================
-function createBoatIcon(course, speed) {
+function createBoatIcon(course, speed, name, type) {
   const moving = speed != null && speed > 0.5;
   const pulseClass = 'anchor-pulse-ring' + (moving ? '' : ' active');
+  const cfg   = BOAT_TYPE_CFG[type] || BOAT_TYPE_CFG['sloop_croisiere'];
+  const label = name || myBoatName || 'POLLEN';
+  const fs    = cfg.fs   || '22px';
+  const glow  = `drop-shadow(0 0 6px ${cfg.glow})`;
+  const extra = cfg.tilt ? 'style="display:inline-block;transform:rotate(-12deg)"' : '';
   const html = `<div class="boat-icon-root">
     <div class="${pulseClass}"></div>
-    <div class="boat-emoji-wrap">
-      <span class="boat-emoji">&#x26F5;</span>
+    <div class="boat-emoji-wrap" style="filter:${glow}">
+      <span class="boat-emoji" style="font-size:${fs}" ${extra}>${cfg.emoji}</span>
     </div>
-    <div class="boat-label">POLLEN</div>
+    <div class="boat-label">${label}</div>
   </div>`;
   return L.divIcon({
     html,
@@ -769,7 +783,7 @@ async function fetchPosition() {
     const latlng = [pos.latitude, pos.longitude];
 
     if (!boatMarker) {
-      boatMarker = L.marker(latlng, { icon: createBoatIcon(pos.course, pos.speed_knots), zIndexOffset: 1000 })
+      boatMarker = L.marker(latlng, { icon: createBoatIcon(pos.course, pos.speed_knots, myBoatName, myBoatType), zIndexOffset: 1000 })
         .addTo(map);
       map.setView(latlng, 8);
     } else {
@@ -1061,6 +1075,16 @@ async function bootstrap() {
     if (txt) txt.textContent = 'Erreur carte : ' + err.message;
     return;
   }
+
+  // Charger profil utilisateur (nom + type de bateau pour l'icône)
+  try {
+    const _me = await fetch('/api/me');
+    if (_me.ok) {
+      const m = await _me.json();
+      myBoatName = m.boat_name || myBoatName;
+      myBoatType  = m.boat_type  || myBoatType;
+    }
+  } catch(e) {}
 
   // Chargement initial en parallèle — allSettled ne bloque jamais
   await Promise.allSettled([
