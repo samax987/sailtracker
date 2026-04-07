@@ -96,10 +96,22 @@
         <label>Nom du bateau</label>
         <input type="text" name="boat_name" value="{{ user.boat_name }}" placeholder="POLLEN 1">
       </div>
-      <div style="display:flex;gap:10px;align-items:center">
-        <button type="submit" class="btn-save">Enregistrer</button>
-        <span style="font-size:0.78rem;color:var(--text-muted)">Type : {{ user.boat_type or '—' }}</span>
+      <div class="form-group">
+        <label>Type de bateau</label>
+        <select name="boat_type" style="width:100%;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:6px;padding:8px 12px;color:var(--text-primary);font-size:0.9rem;font-family:var(--font);outline:none">
+          {% for key, tpl in templates.items() %}
+          <option value="{{ key }}" {% if user.boat_type == key %}selected{% endif %}>{{ tpl.name }}</option>
+          {% endfor %}
+        </select>
       </div>
+      <div class="form-group" style="display:flex;align-items:center;gap:10px">
+        <label style="display:flex;align-items:center;gap:7px;cursor:pointer;margin:0">
+          <input type="checkbox" name="reset_polars" value="1"
+                 style="width:auto;accent-color:var(--accent-warn)">
+          <span style="font-size:0.82rem;color:var(--accent-warn)">Réinitialiser les polaires au modèle du type choisi</span>
+        </label>
+      </div>
+      <button type="submit" class="btn-save">Enregistrer</button>
     </form>
   </div>
 

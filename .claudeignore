@@ -1,0 +1,85 @@
+# ═══════════════════════════════════════════════
+# .claudeignore — Empêche Claude Code de lire ces fichiers
+# Copier ce fichier à la racine de CHAQUE projet
+# ═══════════════════════════════════════════════
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+
+# Environnement virtuel
+venv/
+.venv/
+env/
+
+# Données et bases de données (Claude n'a pas besoin de lire les données)
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
+*.csv
+*.parquet
+data/
+backups/
+
+# Logs (très gros fichiers inutiles pour Claude)
+*.log
+logs/
+*.log.*
+
+# Secrets (JAMAIS lire)
+.env
+.env.*
+*.pem
+*.key
+
+# Git
+.git/
+.gitignore
+
+# Node (si présent)
+node_modules/
+package-lock.json
+yarn.lock
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Cache
+.cache/
+.pytest_cache/
+.mypy_cache/
+
+# Images et fichiers lourds
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.mp4
+*.pdf
+
+# NetCDF et données océanographiques (Sargasses)
+*.nc
+*.nc4
+*.grib
+*.grib2
+
+# Fichiers générés
+*.min.js
+*.min.css
+*.map
