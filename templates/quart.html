@@ -853,6 +853,12 @@ function render(d) {
     activeRouteId = null;
     routeEl.innerHTML = '<div class="no-data">Aucune traversée active</div>';
   }
+  // Update log button state
+  const logBtn = document.getElementById('log-btn');
+  if (logBtn) {
+    logBtn.style.opacity = activeRouteId ? '1' : '0.4';
+    logBtn.title = activeRouteId ? '' : 'Démarrez une traversée pour activer le journal';
+  }
 
   // Forecast 12h
   const fcEl = document.getElementById('fc-scroll');
@@ -951,9 +957,12 @@ document.querySelectorAll('.type-btn').forEach(btn => {
 async function saveLog() {
   const content = document.getElementById('log-text').value.trim();
   if (!content) return;
-  const routeId = activeRouteId || 1;
+  if (!activeRouteId) {
+    alert('Aucune traversée active. Démarrez une traversée dans Passage pour activer le journal.');
+    closeLog(); return;
+  }
   try {
-    await fetch(`/api/logbook/${routeId}`, {
+    await fetch(`/api/logbook/${activeRouteId}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ entry_type: selectedType, text: content }),

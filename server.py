@@ -3095,7 +3095,8 @@ def api_quart():
         # ── Passage actif ─────────────────────────────────────────────────────
         route_info = None
         active_route = conn.execute(
-            "SELECT id, name, waypoints FROM passage_routes WHERE phase='active' LIMIT 1"
+            "SELECT id, name, waypoints FROM passage_routes WHERE phase='active' AND user_id=? LIMIT 1",
+            (current_user.id,)
         ).fetchone()
         if active_route:
             import json as _json
