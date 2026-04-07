@@ -1,0 +1,10 @@
+{
+  "name": "Quart — SailTracker",
+  "short_name": "Quart",
+  "description": "Dashboard de navigation temps réel",
+  "start_url": "/quart",
+  "display": "standalone",
+  "background_color": "#060a10",
+  "theme_color": "#060a10",
+  "orientation": "landscape"
+}

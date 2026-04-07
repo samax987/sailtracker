@@ -425,6 +425,9 @@
     body.at-sea #panel-boat { top: 36px; }
     body.at-sea nav#nav-bar { top: 32px; }
   </style>
+  <link rel="manifest" href="/static/manifest.json">
+  <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
+  <meta name="mobile-web-app-capable" content="yes">
 </head>
 <body>
 
@@ -1113,5 +1116,10 @@ async function bootstrap() {
 bootstrap();
 </script>
 <a href="/quart" style="position:fixed;bottom:18px;right:18px;z-index:9999;background:rgba(59,158,255,.18);border:1px solid rgba(59,158,255,.5);color:#60a5fa;padding:10px 16px;border-radius:50px;font-size:.82rem;font-weight:700;text-decoration:none;backdrop-filter:blur(8px);box-shadow:0 2px 12px rgba(0,0,0,.4);white-space:nowrap">⚓ Quart</a>
+<script>
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/static/sw.js').catch(() => {});
+}
+</script>
 </body>
 </html>

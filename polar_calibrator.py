@@ -263,42 +263,58 @@ def process_position_pair(pos1: dict, pos2: dict) -> dict | None:
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 
-def run_calibration():
-    logger.info("=== Démarrage calibration polaires ===")
-    db = get_db()
-    c = db.cursor()
+def calibrate_for_user(conn, user_id, username):
+    """
+    Calibre les polaires pour un utilisateur donné.
+    Si user_id=None, calibre sans filtre (mode legacy).
+    """
+    logger.info("--- Calibration pour user %s (id=%s) ---", username, user_id)
+    c = conn.cursor()
 
-    # Positions InReach déjà traitées (identifiées par timestamp)
+    # Positions InReach déjà traitées pour cet user
     try:
-        already_done = set(
-            r[0] for r in c.execute(
-                "SELECT timestamp FROM polar_observations"
-            ).fetchall()
-        )
+        if user_id is not None:
+            already_done = set(
+                r[0] for r in c.execute(
+                    "SELECT timestamp FROM polar_observations WHERE user_id = ?",
+                    (user_id,)
+                ).fetchall()
+            )
+        else:
+            already_done = set(
+                r[0] for r in c.execute(
+                    "SELECT timestamp FROM polar_observations"
+                ).fetchall()
+            )
     except Exception as e:
         logger.error("Erreur lecture polar_observations: %s", e)
-        db.close()
         return
 
-    # Récupère les positions InReach (source='inreach'), triées par timestamp
+    # Positions InReach triées par timestamp
     try:
-        positions = c.execute("""
-            SELECT id, timestamp, latitude, longitude, speed_knots, course
-            FROM positions
-            WHERE source = 'inreach'
-            ORDER BY timestamp ASC
-        """).fetchall()
+        if user_id is not None:
+            positions = c.execute("""
+                SELECT id, timestamp, latitude, longitude, speed_knots, course
+                FROM positions
+                WHERE source = 'inreach' AND user_id = ?
+                ORDER BY timestamp ASC
+            """, (user_id,)).fetchall()
+        else:
+            positions = c.execute("""
+                SELECT id, timestamp, latitude, longitude, speed_knots, course
+                FROM positions
+                WHERE source = 'inreach'
+                ORDER BY timestamp ASC
+            """).fetchall()
     except Exception as e:
         logger.error("Erreur lecture positions: %s", e)
-        db.close()
         return
 
     positions = list(positions)
-    logger.info("%d positions InReach au total", len(positions))
+    logger.info("%d positions InReach pour %s", len(positions), username)
 
     if len(positions) < 2:
-        logger.info("Pas assez de positions InReach")
-        db.close()
+        logger.info("Pas assez de positions pour %s", username)
         return
 
     inserted = 0
@@ -308,7 +324,6 @@ def run_calibration():
         pos1 = dict(positions[i])
         pos2 = dict(positions[i + 1])
 
-        # Déjà traité ?
         if pos1["timestamp"] in already_done:
             continue
 
@@ -316,7 +331,6 @@ def run_calibration():
         if obs is None:
             continue
 
-        # Fetch vent Open-Meteo
         time.sleep(API_DELAY)
         tws_kts, twd = fetch_wind_openmeteo(obs["lat"], obs["lon"], obs["mid_time"])
         api_calls += 1
@@ -331,9 +345,8 @@ def run_calibration():
 
         twa = compute_twa(obs["cog"], twd)
 
-        # Correction courant : STW = SOG - composante du courant dans l'axe du cap
         current_speed_kts, current_dir_deg = get_current_from_db(
-            obs["lat"], obs["lon"], obs["mid_time"], db
+            obs["lat"], obs["lon"], obs["mid_time"], conn
         )
         if current_speed_kts and current_dir_deg is not None:
             angle_rad = math.radians(current_dir_deg - obs["cog"])
@@ -343,7 +356,7 @@ def run_calibration():
             stw = obs["sog_kts"]
             current_speed_kts, current_dir_deg = None, None
 
-        sail_cfg_id = get_sail_config_id(obs["mid_time"], db)
+        sail_cfg_id = get_sail_config_id(obs["mid_time"], conn)
 
         try:
             c.execute("""
@@ -352,15 +365,15 @@ def run_calibration():
                      sog_kts, cog_deg,
                      tws_kts, twd_deg, twa_deg,
                      current_speed_kts, current_dir_deg,
-                     stw_kts, sail_config_id, is_valid)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+                     stw_kts, sail_config_id, is_valid, user_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
             """, (
                 obs["timestamp"],
                 round(obs["lat"], 5), round(obs["lon"], 5),
                 obs["sog_kts"], obs["cog"],
                 round(tws_kts, 2), round(twd, 1), round(twa, 1),
                 current_speed_kts, current_dir_deg,
-                round(stw, 3), sail_cfg_id,
+                round(stw, 3), sail_cfg_id, user_id,
             ))
             if c.rowcount > 0:
                 inserted += 1
@@ -368,25 +381,51 @@ def run_calibration():
         except Exception as e:
             logger.warning("Erreur insertion: %s", e)
 
-    db.commit()
+    conn.commit()
     logger.info("%d nouvelles observations insérées (%d appels API)", inserted, api_calls)
 
-    # Compte total des observations valides
-    total_obs = c.execute(
-        "SELECT COUNT(*) FROM polar_observations WHERE is_valid=1"
-    ).fetchone()[0]
-    logger.info("Total observations valides : %d", total_obs)
+    # Compte total observations valides pour cet utilisateur
+    if user_id is not None:
+        total_obs = c.execute(
+            "SELECT COUNT(*) FROM polar_observations WHERE is_valid=1 AND user_id=?",
+            (user_id,)
+        ).fetchone()[0]
+    else:
+        total_obs = c.execute(
+            "SELECT COUNT(*) FROM polar_observations WHERE is_valid=1"
+        ).fetchone()[0]
+    logger.info("Total observations valides pour %s : %d", username, total_obs)
 
-    # Calibration si on a suffisamment d'observations
     if total_obs >= CALIB_THRESHOLD:
         polar = get_polar()
-        updated = update_polars_from_observations(db, polar, min_obs=5)
+        updated = update_polars_from_observations(conn, polar, min_obs=5)
         if updated > 0:
-            logger.info("Polaires calibrées : %d cases mises à jour (total %d obs)", updated, total_obs)
+            logger.info("Polaires calibrées pour %s : %d cases mises à jour", username, updated)
         else:
-            logger.info("Calibration : pas assez d'observations par case (total=%d)", total_obs)
+            logger.info("Calibration %s : pas assez d'observations par case (total=%d)", username, total_obs)
     else:
-        logger.info("Calibration différée : %d/%d observations requises", total_obs, CALIB_THRESHOLD)
+        logger.info("Calibration différée pour %s : %d/%d obs requises", username, total_obs, CALIB_THRESHOLD)
+
+
+def run_calibration():
+    logger.info("=== Démarrage calibration polaires ===")
+    db = get_db()
+
+    # Compatibilité arrière : si la table users n'existe pas, calibrer sans filtre user
+    try:
+        users = db.execute("SELECT id, username FROM users").fetchall()
+        if not users:
+            logger.info("Aucun utilisateur dans la DB, calibration sans filtre user")
+            calibrate_for_user(db, None, "(all)")
+        else:
+            for user in users:
+                calibrate_for_user(db, user["id"], user["username"])
+    except Exception as e:
+        if "no such table" in str(e).lower():
+            logger.info("Table users absente — calibration mode legacy")
+            calibrate_for_user(db, None, "(legacy)")
+        else:
+            logger.error("Erreur lecture users: %s", e)
 
     db.close()
     logger.info("=== Calibration terminée ===")

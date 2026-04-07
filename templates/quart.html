@@ -233,6 +233,7 @@
     /* ── No data ── */
     .no-data { color: var(--muted); font-size: .82rem; text-align: center; padding: 20px 0; }
   </style>
+<link rel="manifest" href="/static/manifest-quart.json">
 </head>
 <body>
 
@@ -986,6 +987,11 @@ async function fetchSailPrefs() {
 
 // ── Init ──────────────────────────────────────────────────────────────────
 fetchSailPrefs().then(() => refresh().then(scheduleRefresh));
+</script>
+<script>
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/static/sw.js').catch(() => {});
+}
 </script>
 </body>
 </html>

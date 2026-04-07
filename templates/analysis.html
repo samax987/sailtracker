@@ -1,0 +1,694 @@
+{% extends "base.html" %}
+
+{% block title %}SailTracker — Analyse traversée{% endblock %}
+
+{% block nav_analysis %}active{% endblock %}
+
+{% block head_scripts %}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+{% endblock %}
+
+{% block head_styles %}
+<style>
+  :root {
+    --bg-page: #060a10;
+  }
+  body { background: var(--bg-page); }
+
+  .analysis-layout {
+    display: flex;
+    height: calc(100vh - 44px);
+    overflow: hidden;
+  }
+
+  /* Sidebar */
+  .sidebar {
+    width: 280px;
+    min-width: 220px;
+    background: #0d1520;
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .sidebar-header {
+    padding: 14px 16px 10px;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: .08em;
+  }
+  .route-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px;
+  }
+  .route-item {
+    padding: 10px 12px;
+    border-radius: 8px;
+    cursor: pointer;
+    border: 1px solid transparent;
+    transition: background 0.15s, border-color 0.15s;
+    margin-bottom: 4px;
+  }
+  .route-item:hover {
+    background: rgba(96,165,250,0.08);
+    border-color: rgba(96,165,250,0.2);
+  }
+  .route-item.selected {
+    background: rgba(96,165,250,0.15);
+    border-color: var(--accent-info);
+  }
+  .route-item .r-name {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 3px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .route-item .r-ports {
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .route-item .r-date {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    margin-top: 2px;
+  }
+  .phase-badge {
+    display: inline-block;
+    font-size: 0.65rem;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: 10px;
+    margin-left: 6px;
+    vertical-align: middle;
+  }
+  .phase-completed { background: rgba(74,222,128,0.15); color: var(--accent-good); }
+  .phase-active    { background: rgba(251,191,36,0.15);  color: var(--accent-warn); }
+
+  /* Main content */
+  .main-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--bg-page);
+  }
+
+  /* Empty state */
+  .empty-state {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-muted);
+    gap: 12px;
+  }
+  .empty-state .icon { font-size: 3rem; }
+  .empty-state p { font-size: 0.9rem; }
+  .empty-state a { color: var(--accent-info); text-decoration: none; }
+
+  /* Analysis panel */
+  #analysis-panel {
+    display: none;
+    flex: 1;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  #analysis-panel.visible { display: flex; }
+
+  /* Route header */
+  .route-header {
+    padding: 14px 20px 12px;
+    border-bottom: 1px solid var(--border);
+    background: #0d1520;
+    flex-shrink: 0;
+  }
+  .route-header h1 {
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin-bottom: 4px;
+  }
+  .route-meta {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    font-size: 0.78rem;
+    color: var(--text-muted);
+  }
+  .route-meta span { display: flex; align-items: center; gap: 4px; }
+  .route-meta strong { color: var(--text-primary); }
+
+  /* Scrollable body */
+  .analysis-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  /* Stat cards */
+  .stats-row {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .stat-card {
+    flex: 1;
+    min-width: 120px;
+    background: #0d1520;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 16px;
+  }
+  .stat-card .label {
+    font-size: 0.68rem;
+    font-weight: 700;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: .07em;
+    margin-bottom: 6px;
+  }
+  .stat-card .value {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--accent-info);
+    line-height: 1;
+  }
+  .stat-card .unit {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin-top: 2px;
+  }
+
+  /* Section headers */
+  .section-title {
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .section-title::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+
+  /* Map */
+  #track-map {
+    width: 100%;
+    height: 320px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    overflow: hidden;
+    background: #0d1520;
+  }
+  .map-placeholder {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 320px;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    background: #0d1520;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+  }
+
+  /* Accuracy table */
+  .acc-table-wrap {
+    overflow-x: auto;
+  }
+  table.acc-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.8rem;
+  }
+  .acc-table th {
+    padding: 7px 10px;
+    text-align: left;
+    color: var(--text-muted);
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  .acc-table td {
+    padding: 7px 10px;
+    border-bottom: 1px solid rgba(45,74,122,0.4);
+    color: var(--text-primary);
+    white-space: nowrap;
+  }
+  .acc-table tr:hover td { background: rgba(96,165,250,0.05); }
+  .best-model { color: var(--accent-good); font-weight: 700; }
+  .err-cell { font-variant-numeric: tabular-nums; }
+
+  /* Logbook */
+  .logbook-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .log-entry {
+    display: flex;
+    gap: 12px;
+    background: #0d1520;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 0.8rem;
+  }
+  .log-time {
+    color: var(--text-muted);
+    white-space: nowrap;
+    font-size: 0.72rem;
+    min-width: 110px;
+  }
+  .log-body { flex: 1; }
+  .log-type {
+    font-size: 0.68rem;
+    font-weight: 700;
+    color: var(--accent-info);
+    text-transform: uppercase;
+    margin-bottom: 2px;
+  }
+  .log-text { color: var(--text-primary); margin-bottom: 4px; }
+  .log-conditions {
+    color: var(--text-muted);
+    font-size: 0.72rem;
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .no-data {
+    color: var(--text-muted);
+    font-style: italic;
+    font-size: 0.82rem;
+    padding: 12px 0;
+  }
+
+  /* Loading spinner */
+  .loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 40px;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    gap: 10px;
+  }
+  .spinner {
+    width: 18px; height: 18px;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent-info);
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  @media (max-width: 640px) {
+    .analysis-layout { flex-direction: column; }
+    .sidebar { width: 100%; height: 180px; border-right: none; border-bottom: 1px solid var(--border); }
+    .route-list { display: flex; flex-direction: row; overflow-x: auto; overflow-y: hidden; padding: 6px; gap: 6px; }
+    .route-item { min-width: 160px; margin-bottom: 0; }
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="analysis-layout">
+
+  <!-- Sidebar: route list -->
+  <div class="sidebar">
+    <div class="sidebar-header">Traversées</div>
+    <div class="route-list" id="route-list">
+      {% if routes %}
+        {% for r in routes %}
+        <div class="route-item" data-id="{{ r.id }}" onclick="selectRoute({{ r.id }}, this)">
+          <div class="r-name">
+            {{ r.name }}
+            <span class="phase-badge phase-{{ r.phase }}">{{ r.phase }}</span>
+          </div>
+          <div class="r-ports">
+            {% if r.departure_port or r.arrival_port %}
+              {{ r.departure_port or '?' }} → {{ r.arrival_port or '?' }}
+            {% else %}
+              Ports non définis
+            {% endif %}
+          </div>
+          <div class="r-date">
+            {% if r.actual_departure %}
+              {{ r.actual_departure[:10] }}
+            {% else %}
+              Date inconnue
+            {% endif %}
+          </div>
+        </div>
+        {% endfor %}
+      {% else %}
+        <div style="padding:16px;color:var(--text-muted);font-size:0.8rem;">
+          Aucune traversée active ou complétée.
+        </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Main content -->
+  <div class="main-content">
+    <!-- Empty state -->
+    {% if not routes %}
+    <div class="empty-state">
+      <div class="icon">⛵</div>
+      <p>Aucune traversée enregistrée.</p>
+      <p><a href="/passage">Créer et démarrer une route</a> pour voir l'analyse ici.</p>
+    </div>
+    {% else %}
+    <div class="empty-state" id="empty-hint">
+      <div class="icon">📊</div>
+      <p>Sélectionnez une traversée dans la liste</p>
+    </div>
+    {% endif %}
+
+    <!-- Analysis panel (hidden until route selected) -->
+    <div id="analysis-panel">
+      <!-- Header -->
+      <div class="route-header">
+        <h1 id="hdr-name">—</h1>
+        <div class="route-meta">
+          <span>🧭 <strong id="hdr-ports">—</strong></span>
+          <span>📅 <strong id="hdr-dep">—</strong></span>
+          <span id="hdr-arr-wrap">→ <strong id="hdr-arr">—</strong></span>
+          <span id="hdr-dur-wrap">⏱ <strong id="hdr-dur">—</strong> h</span>
+        </div>
+      </div>
+
+      <!-- Body -->
+      <div class="analysis-body" id="analysis-body">
+        <div class="loading" id="loading-indicator">
+          <div class="spinner"></div>
+          Chargement des données…
+        </div>
+        <div id="analysis-data" style="display:none;flex-direction:column;gap:20px;">
+
+          <!-- Stats -->
+          <div>
+            <div class="section-title">Statistiques</div>
+            <div class="stats-row">
+              <div class="stat-card">
+                <div class="label">Vitesse moy.</div>
+                <div class="value" id="stat-avg-spd">—</div>
+                <div class="unit">nœuds</div>
+              </div>
+              <div class="stat-card">
+                <div class="label">Vitesse max</div>
+                <div class="value" id="stat-max-spd">—</div>
+                <div class="unit">nœuds</div>
+              </div>
+              <div class="stat-card">
+                <div class="label">Points GPS</div>
+                <div class="value" id="stat-npos">—</div>
+                <div class="unit">enregistrements</div>
+              </div>
+              <div class="stat-card">
+                <div class="label">Durée</div>
+                <div class="value" id="stat-dur">—</div>
+                <div class="unit">heures</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Map -->
+          <div>
+            <div class="section-title">Route</div>
+            <div id="track-map"></div>
+          </div>
+
+          <!-- Model accuracy -->
+          <div>
+            <div class="section-title">Précision modèles météo</div>
+            <div id="acc-container">
+              <div class="no-data">Aucune donnée de précision pour cette période.</div>
+            </div>
+          </div>
+
+          <!-- Logbook -->
+          <div>
+            <div class="section-title">Journal de bord</div>
+            <div id="logbook-container">
+              <div class="no-data">Aucune entrée de journal pour cette traversée.</div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+let map = null;
+let trackLayer = null;
+let markerStart = null;
+let markerEnd = null;
+
+function selectRoute(routeId, el) {
+  // Update sidebar selection
+  document.querySelectorAll('.route-item').forEach(i => i.classList.remove('selected'));
+  el.classList.add('selected');
+
+  // Show analysis panel, hide empty hint
+  document.getElementById('empty-hint') && (document.getElementById('empty-hint').style.display = 'none');
+  const panel = document.getElementById('analysis-panel');
+  panel.classList.add('visible');
+
+  // Show loading
+  document.getElementById('loading-indicator').style.display = 'flex';
+  document.getElementById('analysis-data').style.display = 'none';
+
+  // Fetch data
+  fetch('/api/analysis/' + routeId)
+    .then(r => r.json())
+    .then(data => renderAnalysis(data))
+    .catch(err => {
+      document.getElementById('loading-indicator').innerHTML =
+        '<span style="color:var(--accent-danger)">Erreur: ' + err.message + '</span>';
+    });
+}
+
+function renderAnalysis(data) {
+  const route = data.route;
+  const positions = data.positions || [];
+  const accuracy = data.accuracy || [];
+  const stats = data.stats || {};
+  const logbook = data.logbook || [];
+
+  // Header
+  document.getElementById('hdr-name').textContent = route.name || '—';
+  const dep_port = route.departure_port || '?';
+  const arr_port = route.arrival_port || '?';
+  document.getElementById('hdr-ports').textContent = dep_port + ' → ' + arr_port;
+  document.getElementById('hdr-dep').textContent = route.actual_departure ? route.actual_departure.slice(0, 16).replace('T', ' ') + ' UTC' : '—';
+  if (route.actual_arrival) {
+    document.getElementById('hdr-arr').textContent = route.actual_arrival.slice(0, 16).replace('T', ' ') + ' UTC';
+    document.getElementById('hdr-arr-wrap').style.display = '';
+  } else {
+    document.getElementById('hdr-arr-wrap').style.display = 'none';
+  }
+  if (stats.duration_h != null) {
+    document.getElementById('hdr-dur').textContent = stats.duration_h;
+    document.getElementById('hdr-dur-wrap').style.display = '';
+  } else {
+    document.getElementById('hdr-dur-wrap').style.display = 'none';
+  }
+
+  // Stats cards
+  document.getElementById('stat-avg-spd').textContent = stats.avg_speed != null ? stats.avg_speed : '—';
+  document.getElementById('stat-max-spd').textContent = stats.max_speed != null ? stats.max_speed : '—';
+  document.getElementById('stat-npos').textContent = stats.n_positions != null ? stats.n_positions : '—';
+  document.getElementById('stat-dur').textContent = stats.duration_h != null ? stats.duration_h : '—';
+
+  // Map
+  renderMap(positions);
+
+  // Accuracy table
+  renderAccuracy(accuracy);
+
+  // Logbook
+  renderLogbook(logbook);
+
+  // Show data
+  document.getElementById('loading-indicator').style.display = 'none';
+  document.getElementById('analysis-data').style.display = 'flex';
+}
+
+function renderMap(positions) {
+  // Init map if needed
+  if (!map) {
+    map = L.map('track-map', {
+      zoomControl: true,
+      attributionControl: false,
+    });
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+      maxZoom: 18,
+      attribution: '&copy; CartoDB'
+    }).addTo(map);
+    L.control.attribution({ prefix: false }).addTo(map);
+  }
+
+  // Remove previous track
+  if (trackLayer) { map.removeLayer(trackLayer); trackLayer = null; }
+  if (markerStart) { map.removeLayer(markerStart); markerStart = null; }
+  if (markerEnd) { map.removeLayer(markerEnd); markerEnd = null; }
+
+  if (!positions || positions.length === 0) {
+    document.getElementById('track-map').innerHTML =
+      '<div class="map-placeholder">Aucune position GPS enregistrée pour cette traversée.</div>';
+    return;
+  }
+
+  // Ensure map container is visible (re-invalidate size)
+  map.invalidateSize();
+
+  const latlngs = positions.map(p => [p.latitude, p.longitude]);
+
+  // Draw polyline (blue)
+  trackLayer = L.polyline(latlngs, {
+    color: '#3b82f6',
+    weight: 3,
+    opacity: 0.85,
+    lineJoin: 'round',
+  }).addTo(map);
+
+  // Start marker (green)
+  const startIcon = L.divIcon({
+    html: '<div style="width:10px;height:10px;border-radius:50%;background:#4ade80;border:2px solid #fff;"></div>',
+    iconSize: [10, 10], iconAnchor: [5, 5], className: '',
+  });
+  markerStart = L.marker(latlngs[0], { icon: startIcon }).addTo(map)
+    .bindPopup('Départ');
+
+  // End marker (red)
+  const endIcon = L.divIcon({
+    html: '<div style="width:10px;height:10px;border-radius:50%;background:#f87171;border:2px solid #fff;"></div>',
+    iconSize: [10, 10], iconAnchor: [5, 5], className: '',
+  });
+  markerEnd = L.marker(latlngs[latlngs.length - 1], { icon: endIcon }).addTo(map)
+    .bindPopup('Arrivée');
+
+  // Fit bounds
+  map.fitBounds(trackLayer.getBounds(), { padding: [30, 30] });
+}
+
+function renderAccuracy(accuracy) {
+  const container = document.getElementById('acc-container');
+  if (!accuracy || accuracy.length === 0) {
+    container.innerHTML = '<div class="no-data">Aucune donnée de précision modèle pour cette période.</div>';
+    return;
+  }
+
+  // Pivot: model → { h24, h48, h72 }
+  const models = {};
+  for (const row of accuracy) {
+    if (!models[row.model]) models[row.model] = {};
+    const key = 'h' + row.forecast_hour;
+    if (!models[row.model][key]) {
+      models[row.model][key] = { sum: 0, n: 0 };
+    }
+    models[row.model][key].sum += (row.avg_error || 0) * row.n;
+    models[row.model][key].n += row.n;
+  }
+
+  // Build summary rows
+  const rows = Object.entries(models).map(([model, data]) => {
+    const h24 = data['h24'] ? (data['h24'].sum / data['h24'].n) : null;
+    const h48 = data['h48'] ? (data['h48'].sum / data['h48'].n) : null;
+    const h72 = data['h72'] ? (data['h72'].sum / data['h72'].n) : null;
+    const avg = [h24, h48, h72].filter(v => v != null);
+    const overall = avg.length ? avg.reduce((a,b) => a+b, 0) / avg.length : null;
+    return { model, h24, h48, h72, overall };
+  });
+
+  // Sort by overall error (ascending = best first)
+  rows.sort((a, b) => (a.overall ?? 999) - (b.overall ?? 999));
+
+  const fmt = v => v != null ? v.toFixed(2) + ' kt' : '—';
+
+  let html = '<div class="acc-table-wrap"><table class="acc-table">';
+  html += '<thead><tr><th>Modèle</th><th>H+24 err.</th><th>H+48 err.</th><th>H+72 err.</th><th>Meilleur</th></tr></thead>';
+  html += '<tbody>';
+  rows.forEach((r, i) => {
+    const isBest = i === 0;
+    html += `<tr>
+      <td class="${isBest ? 'best-model' : ''}">${r.model}${isBest ? ' ★' : ''}</td>
+      <td class="err-cell">${fmt(r.h24)}</td>
+      <td class="err-cell">${fmt(r.h48)}</td>
+      <td class="err-cell">${fmt(r.h72)}</td>
+      <td>${isBest ? '<span style="color:var(--accent-good)">✓ Plus précis</span>' : ''}</td>
+    </tr>`;
+  });
+  html += '</tbody></table></div>';
+  container.innerHTML = html;
+}
+
+function renderLogbook(logbook) {
+  const container = document.getElementById('logbook-container');
+  if (!logbook || logbook.length === 0) {
+    container.innerHTML = '<div class="no-data">Aucune entrée de journal pour cette traversée.</div>';
+    return;
+  }
+
+  const typeLabel = {
+    'note': 'Note',
+    'watch': 'Quart',
+    'sail_change': 'Voile',
+    'waypoint': 'Waypoint',
+    'weather': 'Météo',
+    'engine': 'Moteur',
+    'arrival': 'Arrivée',
+    'departure': 'Départ',
+  };
+
+  let html = '<div class="logbook-list">';
+  for (const entry of logbook) {
+    const ts = entry.timestamp ? entry.timestamp.slice(0, 16).replace('T', ' ') + ' UTC' : '—';
+    const type = typeLabel[entry.entry_type] || entry.entry_type || 'Note';
+    const conditions = [];
+    if (entry.wind_speed_kts != null) conditions.push('💨 ' + entry.wind_speed_kts + ' kt');
+    if (entry.wind_dir_deg != null) conditions.push('🧭 ' + entry.wind_dir_deg + '°');
+    if (entry.sog_kts != null) conditions.push('⚡ ' + entry.sog_kts + ' kt SOG');
+
+    html += `<div class="log-entry">
+      <div class="log-time">${ts}</div>
+      <div class="log-body">
+        <div class="log-type">${type}</div>
+        ${entry.text ? `<div class="log-text">${entry.text}</div>` : ''}
+        ${conditions.length ? `<div class="log-conditions">${conditions.join(' &nbsp; ')}</div>` : ''}
+      </div>
+    </div>`;
+  }
+  html += '</div>';
+  container.innerHTML = html;
+}
+</script>
+{% endblock %}

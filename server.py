@@ -236,6 +236,100 @@ def passage_page():
 def polars_page():
     return render_template("polars.html")
 
+@app.route("/analysis")
+@login_required
+def analysis_page():
+    """Page d'analyse post-traversee."""
+    conn = get_db()
+    routes = conn.execute("""
+        SELECT id, name, departure_port, arrival_port, actual_departure, actual_arrival,
+               notes, phase
+        FROM passage_routes
+        WHERE user_id=? AND phase IN ('completed', 'active')
+        ORDER BY actual_departure DESC
+    """, (current_user.id,)).fetchall()
+    conn.close()
+    return render_template("analysis.html", routes=[dict(r) for r in routes], user=current_user)
+
+
+@app.route("/api/analysis/<int:route_id>")
+@login_required
+def api_analysis(route_id):
+    """API: donnees completes d'analyse pour une traversee."""
+    conn = get_db()
+    route = conn.execute(
+        "SELECT * FROM passage_routes WHERE id=? AND user_id=?",
+        (route_id, current_user.id)
+    ).fetchone()
+    if not route:
+        conn.close()
+        return jsonify({"error": "Route non trouvee"}), 404
+
+    route = dict(route)
+    dep = route.get('actual_departure') or route.get('created_at')
+    arr = route.get('actual_arrival')
+
+    # Track points during crossing
+    if dep:
+        q = "SELECT timestamp, latitude, longitude, speed_knots, course FROM positions WHERE user_id=? AND timestamp >= ?"
+        params = [current_user.id, dep]
+        if arr:
+            q += " AND timestamp <= ?"
+            params.append(arr)
+        q += " ORDER BY timestamp ASC"
+        positions = [dict(r) for r in conn.execute(q, params).fetchall()]
+    else:
+        positions = []
+
+    # Model accuracy for this crossing period
+    if dep:
+        arr_date = arr[:10] if arr else None
+        acc_rows = conn.execute("""
+            SELECT model, zone, forecast_hour,
+                   AVG(wind_speed_error_avg) as avg_error,
+                   COUNT(*) as n
+            FROM model_accuracy
+            WHERE date >= date(?) AND date <= date(COALESCE(?, date('now')))
+            GROUP BY model, zone, forecast_hour
+            ORDER BY model, forecast_hour
+        """, (dep[:10], arr_date)).fetchall()
+        accuracy = [dict(r) for r in acc_rows]
+    else:
+        accuracy = []
+
+    # Stats from track points
+    stats = {}
+    if positions:
+        speeds = [p['speed_knots'] for p in positions if p['speed_knots'] is not None]
+        stats = {
+            'n_positions': len(positions),
+            'avg_speed': round(sum(speeds) / len(speeds), 1) if speeds else 0,
+            'max_speed': round(max(speeds), 1) if speeds else 0,
+            'duration_h': None,
+        }
+        if dep and arr:
+            try:
+                d1 = datetime.fromisoformat(dep.replace('Z', ''))
+                d2 = datetime.fromisoformat(arr.replace('Z', ''))
+                stats['duration_h'] = round((d2 - d1).total_seconds() / 3600, 1)
+            except Exception:
+                pass
+
+    # Logbook entries for this route
+    logs = conn.execute(
+        "SELECT timestamp, entry_type, text, wind_speed_kts, wind_dir_deg, sog_kts FROM logbook_entries WHERE route_id=? ORDER BY timestamp ASC",
+        (route_id,)
+    ).fetchall()
+
+    conn.close()
+    return jsonify({
+        "route": route,
+        "positions": positions,
+        "accuracy": accuracy,
+        "stats": stats,
+        "logbook": [dict(l) for l in logs],
+    })
+
 @app.route("/<path:filename>")
 def static_files(filename):
     return send_from_directory(str(STATIC_DIR), filename)
