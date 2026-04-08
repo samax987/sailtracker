@@ -3254,7 +3254,7 @@ def login_page():
             conn.commit()
         conn.close()
         if row and row['password_hash'] and check_password_hash(row['password_hash'], password):
-            user = User(row['id'], row['username'], row['email'], row['boat_name'], row['boat_type'], row['is_admin'], row.get('telegram_chat_id'))
+            user = User(row['id'], row['username'], row['email'], row['boat_name'], row['boat_type'], row['is_admin'], row['telegram_chat_id'])
             login_user(user, remember=True)
             return redirect(request.args.get("next") or "/")
         return render_template("login.html", error="Identifiants incorrects")
