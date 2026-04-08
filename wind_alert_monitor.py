@@ -100,29 +100,42 @@ def dir_to_compass(deg: float) -> str:
 
 # ── DB ────────────────────────────────────────────────────────────────────────
 
-def get_last_position() -> dict | None:
-    """Récupère la dernière position connue du bateau."""
+def get_active_users_with_positions() -> list:
+    """Retourne la liste des utilisateurs actifs avec leur dernière position et chat_id Telegram."""
+    results = []
     try:
         conn = sqlite3.connect(DB_PATH, timeout=10)
         conn.row_factory = sqlite3.Row
+        # Utilisateurs ayant une position dans les dernières 24h
+        rows = conn.execute("""
+            SELECT u.id, u.username, u.boat_name, u.telegram_chat_id,
+                   p.latitude, p.longitude, p.timestamp
+            FROM users u
+            JOIN (
+                SELECT user_id, latitude, longitude, timestamp,
+                       ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY timestamp DESC) as rn
+                FROM positions
+                WHERE timestamp >= datetime('now', '-24 hours')
+            ) p ON p.user_id = u.id AND p.rn = 1
+            WHERE u.telegram_chat_id IS NOT NULL AND u.telegram_chat_id != ''
+        """).fetchall()
+        conn.close()
+        results = [dict(r) for r in rows]
+    except Exception as e:
+        logger.error("Erreur lecture DB users/positions: %s", e)
+    return results
 
-        # Essai user_id=1 d'abord, puis toute position récente
+
+def get_last_position() -> dict | None:
+    """Compatibilité rétrograde — retourne la position du user_id=1."""
+    try:
+        conn = sqlite3.connect(DB_PATH, timeout=10)
+        conn.row_factory = sqlite3.Row
         row = conn.execute("""
             SELECT latitude, longitude, timestamp
-            FROM positions
-            WHERE user_id = 1
-            ORDER BY timestamp DESC
-            LIMIT 1
+            FROM positions WHERE user_id = 1
+            ORDER BY timestamp DESC LIMIT 1
         """).fetchone()
-
-        if row is None:
-            row = conn.execute("""
-                SELECT latitude, longitude, timestamp
-                FROM positions
-                ORDER BY timestamp DESC
-                LIMIT 1
-            """).fetchone()
-
         conn.close()
         if row:
             return dict(row)
@@ -271,82 +284,87 @@ def build_message(lat: float, lon: float, tws: float, twd: float,
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
-def main():
-    logger.info("=== Vérification vent ===")
+def check_user(user: dict) -> None:
+    """Vérifie le vent pour un utilisateur et envoie une alerte si nécessaire."""
+    user_id = user["id"]
+    username = user["username"]
+    boat_name = user.get("boat_name") or username
+    chat_id = user["telegram_chat_id"]
+    lat, lon = user["latitude"], user["longitude"]
 
-    # 1. Dernière position
-    pos = get_last_position()
-    if pos is None:
-        logger.warning("Pas de position disponible")
-        return
+    logger.info("User %s (%s) — Position: %.4f, %.4f", username, boat_name, lat, lon)
 
-    lat, lon = pos["latitude"], pos["longitude"]
-    logger.info("Position : %.4f, %.4f (ts: %s)", lat, lon, pos["timestamp"])
-
-    # 2. Vent actuel + prévision
+    # Vent actuel + prévision
     wind = fetch_wind_forecast(lat, lon)
     if wind is None:
-        logger.warning("Impossible de récupérer le vent")
+        logger.warning("Impossible de récupérer le vent pour %s", username)
         return
 
     tws = wind["tws"]
     twd = wind["twd"]
     forecast_max = wind["forecast_max_3h"]
-    logger.info("TWS=%.1f kts, TWD=%.0f°, Prévision 3h max=%.1f kts", tws, twd, forecast_max)
+    logger.info("  TWS=%.1f kts, TWD=%.0f°, Prévision 3h max=%.1f kts", tws, twd, forecast_max)
 
-    # 3. État anti-spam
+    # État anti-spam par utilisateur
     state = load_state()
-    last_tws = state.get("last_tws")
+    user_state = state.get(f"user_{user_id}", {})
+    last_tws = user_state.get("last_tws")
 
-    # Calcul tendance
     trend = (tws - last_tws) if last_tws is not None else None
-
-    # 4. Vérification des conditions d'alerte
     triggered_alerts = []
 
-    # Alerte franchissement de bande
     if last_tws is not None:
         old_band = get_band(last_tws)
         new_band = get_band(tws)
-        if old_band != new_band and can_send_alert(state, "band_change"):
+        if old_band != new_band and can_send_alert(user_state, "band_change"):
             triggered_alerts.append("band_change")
-            logger.info("Franchissement de bande: bande %d → %d (%.1f → %.1f kts)",
-                        old_band, new_band, last_tws, tws)
 
-    # Alerte tendance (+5 kts en 15 min)
-    if trend is not None and trend >= 5.0 and can_send_alert(state, "trend_up"):
+    if trend is not None and trend >= 5.0 and can_send_alert(user_state, "trend_up"):
         triggered_alerts.append("trend_up")
-        logger.info("Tendance hausse: +%.1f kts depuis dernier check", trend)
 
-    # Alerte prévision 3h
-    if forecast_max > tws + 5.0 and can_send_alert(state, "forecast_warn"):
+    if forecast_max > tws + 5.0 and can_send_alert(user_state, "forecast_warn"):
         triggered_alerts.append("forecast_warn")
-        logger.info("Prévision 3h: +%.1f kts attendus (%.1f → %.1f kts)",
-                    forecast_max - tws, tws, forecast_max)
 
-    # Alerte critique
-    if tws >= 30.0 and can_send_alert(state, "critical"):
+    if tws >= 30.0 and can_send_alert(user_state, "critical"):
         triggered_alerts.append("critical")
-        logger.info("CRITIQUE: TWS=%.1f kts >= 30 kts", tws)
 
-    # 5. Envoi Telegram si besoin
     if triggered_alerts:
+        import requests as _req
+        token = os.getenv("TELEGRAM_BOT_TOKEN", "")
         msg = build_message(lat, lon, tws, twd, trend, forecast_max, triggered_alerts)
-        logger.info("Envoi alerte Telegram (%s)", ", ".join(triggered_alerts))
-        ok = send_telegram(msg)
-        if ok:
+        # Inject boat name
+        msg = msg.replace("— POLLEN 1</b>", f"— {boat_name}</b>")
+        try:
+            r = _req.post(
+                f"https://api.telegram.org/bot{token}/sendMessage",
+                json={"chat_id": chat_id, "text": msg, "parse_mode": "HTML"},
+                timeout=10
+            )
+            r.raise_for_status()
             for alert_type in triggered_alerts:
-                mark_alert_sent(state, alert_type)
-            logger.info("Alerte envoyée avec succès")
-        else:
-            logger.warning("Échec envoi Telegram")
-    else:
-        logger.info("Aucune alerte à envoyer (TWS=%.1f kts, bande=%d)", tws, get_band(tws))
+                mark_alert_sent(user_state, alert_type)
+            logger.info("  Alerte envoyée à %s (%s)", username, ", ".join(triggered_alerts))
+        except Exception as e:
+            logger.warning("  Erreur Telegram pour %s: %s", username, e)
 
-    # 6. Mise à jour last_tws
-    state["last_tws"] = tws
+    user_state["last_tws"] = tws
+    state[f"user_{user_id}"] = user_state
     save_state(state)
-    logger.info("État sauvegardé (last_tws=%.1f kts)", tws)
+
+
+def main():
+    logger.info("=== Vérification vent (multi-user) ===")
+
+    users = get_active_users_with_positions()
+    if not users:
+        logger.info("Aucun utilisateur actif avec position récente et Telegram configuré")
+        return
+
+    for user in users:
+        try:
+            check_user(user)
+        except Exception as e:
+            logger.error("Erreur pour user %s: %s", user.get("username"), e)
 
 
 if __name__ == "__main__":

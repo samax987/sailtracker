@@ -205,6 +205,14 @@
           <div class="helper">Format : https://share.garmin.com/XXXX — Laisser vide si vous n'avez pas d'InReach.</div>
         </div>
 
+        {% if invite_required %}
+        <div class="section-title">Code d'invitation</div>
+        <div class="form-group">
+          <label for="invite_code">Code d'accès</label>
+          <input type="text" id="invite_code" name="invite_code" placeholder="Demandez le code à Sam" required autocomplete="off">
+          <div class="helper">SailTracker est en accès restreint — un code vous a été communiqué.</div>
+        </div>
+        {% endif %}
         <button type="submit" class="btn-primary">Créer mon compte</button>
       </form>
     </div>

@@ -142,6 +142,24 @@
     </form>
   </div>
 
+  <!-- Notifications Telegram -->
+  <div class="section-card">
+    <h2>Alertes vent — Telegram</h2>
+    <form method="POST" action="/profile">
+      <input type="hidden" name="action" value="update_telegram">
+      <div class="form-group">
+        <label>Chat ID Telegram</label>
+        <input type="text" name="telegram_chat_id" value="{{ user.telegram_chat_id or '' }}"
+               placeholder="ex: 6707653544" style="font-family:monospace">
+        <div class="helper">
+          Pour recevoir les alertes de vent, envoyez <code>/start</code> au bot SailTracker
+          et copiez votre Chat ID ici. Laissez vide pour désactiver.
+        </div>
+      </div>
+      <button type="submit" class="btn-save">Enregistrer</button>
+    </form>
+  </div>
+
   <!-- Changer mot de passe -->
   <div class="section-card">
     <h2>Sécurité</h2>

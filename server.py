@@ -103,24 +103,25 @@ CORS(app, origins=["http://45.55.239.73", "http://localhost", "http://127.0.0.1"
 # =============================================================================
 
 class User(UserMixin):
-    def __init__(self, id, username, email, boat_name, boat_type, is_admin):
+    def __init__(self, id, username, email, boat_name, boat_type, is_admin, telegram_chat_id=None):
         self.id = id
         self.username = username
         self.email = email
         self.boat_name = boat_name
         self.boat_type = boat_type
         self.is_admin = bool(is_admin)
+        self.telegram_chat_id = telegram_chat_id
 
 @login_manager.user_loader
 def load_user(user_id):
     conn = get_db()
     row = conn.execute(
-        "SELECT id, username, email, boat_name, boat_type, is_admin FROM users WHERE id=?",
+        "SELECT id, username, email, boat_name, boat_type, is_admin, telegram_chat_id FROM users WHERE id=?",
         (int(user_id),)
     ).fetchone()
     conn.close()
     if row:
-        return User(row['id'], row['username'], row['email'], row['boat_name'], row['boat_type'], row['is_admin'])
+        return User(row['id'], row['username'], row['email'], row['boat_name'], row['boat_type'], row['is_admin'], row['telegram_chat_id'])
     return None
 
 @login_manager.unauthorized_handler
@@ -3245,7 +3246,7 @@ def login_page():
         password = data.get("password", "")
         conn = get_db()
         row = conn.execute(
-            "SELECT id, username, email, boat_name, boat_type, is_admin, password_hash FROM users WHERE username=? OR email=?",
+            "SELECT id, username, email, boat_name, boat_type, is_admin, password_hash, telegram_chat_id FROM users WHERE username=? OR email=?",
             (username, username)
         ).fetchone()
         if row:
@@ -3253,7 +3254,7 @@ def login_page():
             conn.commit()
         conn.close()
         if row and row['password_hash'] and check_password_hash(row['password_hash'], password):
-            user = User(row['id'], row['username'], row['email'], row['boat_name'], row['boat_type'], row['is_admin'])
+            user = User(row['id'], row['username'], row['email'], row['boat_name'], row['boat_type'], row['is_admin'], row.get('telegram_chat_id'))
             login_user(user, remember=True)
             return redirect(request.args.get("next") or "/")
         return render_template("login.html", error="Identifiants incorrects")
@@ -3266,6 +3267,9 @@ def logout():
     logout_user()
     return redirect("/login")
 
+
+# Code d'invitation (défini dans .env ou variable d'env)
+INVITE_CODE = os.environ.get("SAILTRACKER_INVITE_CODE", "")
 
 @app.route("/register", methods=["GET", "POST"])
 def register_page():
@@ -3280,11 +3284,16 @@ def register_page():
         boat_name = data.get("boat_name", "Mon Bateau").strip()
         boat_type = data.get("boat_type", "sloop_croisiere")
         inreach_url = data.get("inreach_url", "").strip()
+        invite_code = data.get("invite_code", "").strip()
+
+        # Vérification du code d'invitation si configuré
+        if INVITE_CODE and invite_code != INVITE_CODE:
+            return render_template("register.html", error="Code d'invitation invalide.", templates=POLAR_TEMPLATES, invite_required=bool(INVITE_CODE))
 
         if len(password) < 8:
-            return render_template("register.html", error="Mot de passe trop court (8 car. min)", templates=POLAR_TEMPLATES)
+            return render_template("register.html", error="Mot de passe trop court (8 car. min)", templates=POLAR_TEMPLATES, invite_required=bool(INVITE_CODE))
         if not username or not email:
-            return render_template("register.html", error="Champs requis manquants", templates=POLAR_TEMPLATES)
+            return render_template("register.html", error="Champs requis manquants", templates=POLAR_TEMPLATES, invite_required=bool(INVITE_CODE))
 
         conn = get_db()
         try:
@@ -3309,18 +3318,18 @@ def register_page():
                 )
 
             conn.commit()
-            user = User(user_id, username, email, boat_name, boat_type, False)
+            user = User(user_id, username, email, boat_name, boat_type, False, None)
             login_user(user, remember=True)
             return redirect("/")
         except Exception as e:
             conn.rollback()
             if "UNIQUE" in str(e):
-                return render_template("register.html", error="Nom d'utilisateur ou email déjà utilisé", templates=POLAR_TEMPLATES)
-            return render_template("register.html", error=str(e), templates=POLAR_TEMPLATES)
+                return render_template("register.html", error="Nom d'utilisateur ou email déjà utilisé", templates=POLAR_TEMPLATES, invite_required=bool(INVITE_CODE))
+            return render_template("register.html", error=str(e), templates=POLAR_TEMPLATES, invite_required=bool(INVITE_CODE))
         finally:
             conn.close()
 
-    return render_template("register.html", templates=POLAR_TEMPLATES)
+    return render_template("register.html", templates=POLAR_TEMPLATES, invite_required=bool(INVITE_CODE))
 
 
 @app.route("/profile", methods=["GET", "POST"])
@@ -3358,6 +3367,10 @@ def profile_page():
                     )
             else:
                 conn.execute("UPDATE users SET boat_name=? WHERE id=?", (boat_name, current_user.id))
+            conn.commit()
+        elif action == "update_telegram":
+            chat_id = request.form.get("telegram_chat_id", "").strip()
+            conn.execute("UPDATE users SET telegram_chat_id=? WHERE id=?", (chat_id or None, current_user.id))
             conn.commit()
         elif action == "change_password":
             old_pw = request.form.get("old_password", "")
