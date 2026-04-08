@@ -62,13 +62,19 @@ class PolarDiagram:
         )
 
     @classmethod
-    def load_from_db(cls, db_path=None) -> 'PolarDiagram':
+    def load_from_db(cls, db_path=None, user_id=None) -> 'PolarDiagram':
         """Charge le polaire depuis polar_matrix SQLite."""
         path = db_path or DB_PATH
         conn = sqlite3.connect(path)
-        rows = conn.execute(
-            "SELECT twa_deg, tws_kts, speed_kts FROM polar_matrix ORDER BY twa_deg, tws_kts"
-        ).fetchall()
+        if user_id is not None:
+            rows = conn.execute(
+                "SELECT twa_deg, tws_kts, speed_kts FROM polar_matrix WHERE user_id=? ORDER BY twa_deg, tws_kts",
+                (user_id,)
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT twa_deg, tws_kts, speed_kts FROM polar_matrix ORDER BY twa_deg, tws_kts"
+            ).fetchall()
         conn.close()
 
         if not rows:
@@ -250,15 +256,15 @@ def update_polars_from_observations(db, polar: PolarDiagram, min_obs: int = 5,
     return updated
 
 
-def get_polar(db_path=None) -> PolarDiagram:
+def get_polar(db_path=None, user_id=None) -> PolarDiagram:
     """Charge le polaire depuis DB à chaque appel (pas de singleton)."""
     path = db_path or DB_PATH
     try:
-        return PolarDiagram.load_from_db(path)
+        return PolarDiagram.load_from_db(path, user_id=user_id)
     except Exception as e:
         logger.warning("Fallback CSV (DB indisponible: %s)", e)
         return PolarDiagram()
 
 
-def reload_polar():
-    return get_polar()
+def reload_polar(user_id=None):
+    return get_polar(user_id=user_id)

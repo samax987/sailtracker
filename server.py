@@ -1210,7 +1210,7 @@ def api_grib_index():
 @login_required
 def api_polars_get():
     try:
-        return jsonify(get_polar().to_dict())
+        return jsonify(get_polar(user_id=current_user.id).to_dict())
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -1224,7 +1224,7 @@ def api_polars_update():
     if twa is None or tws is None or speed is None:
         return jsonify({"error": "twa, tws, speed requis"}), 400
     try:
-        p = get_polar()
+        p = get_polar(user_id=current_user.id)
         p.update_speed(float(twa), float(tws), float(speed))
         p.save()
         return jsonify({"ok": True})
@@ -1258,7 +1258,7 @@ def api_polars_speed():
     try:
         twa = float(request.args.get("twa", 0))
         tws = float(request.args.get("tws", 0))
-        speed = get_polar().get_boat_speed(twa, tws)
+        speed = get_polar(user_id=current_user.id).get_boat_speed(twa, tws)
         return jsonify({"twa": twa, "tws": tws, "boat_speed_kts": round(speed, 2)})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -1288,7 +1288,7 @@ def api_polars_comparison():
             SELECT twa_deg, tws_kts, stw_kts FROM polar_observations WHERE is_valid=1
         """).fetchall()
         conn.close()
-        p = get_polar()
+        p = get_polar(user_id=current_user.id)
         diffs = []
         total_sq = 0.0
         for r in rows:
@@ -2219,7 +2219,7 @@ def api_engine_status():
     # Benchmark Python (polaire interne)
     try:
         t0 = _time.monotonic()
-        get_polar().get_boat_speed(90.0, 15.0)
+        get_polar(user_id=current_user.id).get_boat_speed(90.0, 15.0)
         bench_python_ms = round((_time.monotonic() - t0) * 1000, 1)
     except Exception:
         pass
@@ -3085,7 +3085,7 @@ def api_quart():
         polar_efficiency = None
         if twa is not None and tws is not None:
             try:
-                polar = get_polar()
+                polar = get_polar(user_id=current_user.id)
                 target = polar.get_boat_speed(twa, tws)
                 if target > 0.1:
                     polar_target = round(target, 1)
