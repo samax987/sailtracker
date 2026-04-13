@@ -395,7 +395,7 @@ def build_active_passage_message(status, wx, forecast_days=None):
         f"  🌊 Vagues {wave_str} · Houle {swell_str}\n\n"
         f"<b>📅 Prévisions 3 jours :</b>\n{forecast_txt}\n\n"
         f"<a href='{SERVER_URL}/passage'>📊 Passage Planner</a> · "
-        f"<a href='{SERVER_URL}/logbook/{status[\"route_id\"]}'>📓 Journal</a>"
+        f"<a href='{SERVER_URL}/logbook/{status.get('route_id', '')}'>📓 Journal</a>"
     )
 
 

@@ -162,11 +162,24 @@ def fetch_wind_forecast(lat: float, lon: float) -> dict | None:
         "past_hours": 1,
     }
 
-    try:
-        resp = _SESSION.get(url, params=params, timeout=REQUEST_TIMEOUT)
-        resp.raise_for_status()
-        data = resp.json()
+    data = None
+    for attempt in range(3):
+        try:
+            resp = _SESSION.get(url, params=params, timeout=REQUEST_TIMEOUT)
+            resp.raise_for_status()
+            data = resp.json()
+            break
+        except Exception as e:
+            if attempt < 2:
+                time.sleep(10 * (attempt + 1))
+            else:
+                logging.error(f"Erreur Open-Meteo: {e}")
+                return None
 
+    if data is None:
+        return None
+
+    try:
         hourly = data.get("hourly", {})
         times = hourly.get("time", [])
         speeds = hourly.get("wind_speed_10m", [])

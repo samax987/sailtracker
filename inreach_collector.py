@@ -303,6 +303,11 @@ def collect_for_user(user_id: int, share_url: str, feed_password: str | None,
 # =============================================================================
 
 def main():
+    # Vérifier le mode navigation (sailing/anchor)
+    if os.getenv("INREACH_MODE", "sailing").lower() == "anchor":
+        logger.info("Mode ancre actif — collecte InReach suspendue")
+        return
+
     conn = get_db()
     try:
         configs = conn.execute(
