@@ -46,9 +46,12 @@ class User(UserMixin):
 
 
 def get_db() -> sqlite3.Connection:
-    """Ouvre une connexion SQLite avec accès par nom de colonne."""
-    conn = sqlite3.connect(DB_PATH, timeout=10)
+    """Ouvre une connexion SQLite avec WAL mode (résistant aux accès concurrents)."""
+    conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    conn.execute("PRAGMA busy_timeout=10000")
     return conn
 
 
