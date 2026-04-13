@@ -41,6 +41,12 @@
     #refresh-btn { background: none; border: 1px solid var(--border); color: var(--muted);
       border-radius: 6px; padding: 4px 10px; font-size: .72rem; cursor: pointer; }
     #refresh-btn:active { background: var(--dim); }
+    #mode-btn { border-radius: 6px; padding: 4px 11px; font-size: .72rem; cursor: pointer;
+      border: 1px solid var(--border); font-weight: 600; transition: all .2s; }
+    #mode-btn.sailing { background: rgba(62,207,142,.12); border-color: rgba(62,207,142,.5);
+      color: #3ecf8e; }
+    #mode-btn.anchor  { background: rgba(251,191,36,.12);  border-color: rgba(251,191,36,.5);
+      color: #fbbf24; }
 
     /* ── Main scroll ── */
     #main { overflow-y: auto; -webkit-overflow-scrolling: touch;
@@ -241,6 +247,7 @@
 <div id="topbar">
   <span class="utc" id="utc-clock">--:--:-- UTC</span>
   <span class="age" id="pos-age"></span>
+  <button id="mode-btn" onclick="toggleMode()" title="Basculer navigation / mouillage">…</button>
   <button class="refresh-btn" onclick="refresh()" id="refresh-btn">↻</button>
 </div>
 
@@ -994,7 +1001,56 @@ async function fetchSailPrefs() {
   } catch(e) { /* silently ignore */ }
 }
 
+// ── Mode navigation / mouillage ───────────────────────────────────────────
+async function loadMode() {
+  try {
+    const r = await fetch('/api/mode');
+    if (!r.ok) return;
+    const { mode } = await r.json();
+    setModeBtn(mode);
+  } catch(e) {}
+}
+
+function setModeBtn(mode) {
+  const btn = document.getElementById('mode-btn');
+  if (mode === 'anchor') {
+    btn.textContent = '⚓ Mouillage';
+    btn.className = 'anchor';
+  } else {
+    btn.textContent = '⛵ Navigation';
+    btn.className = 'sailing';
+  }
+  btn.dataset.mode = mode;
+}
+
+async function toggleMode() {
+  const btn = document.getElementById('mode-btn');
+  const current = btn.dataset.mode || 'sailing';
+  const next = current === 'sailing' ? 'anchor' : 'sailing';
+  const label = next === 'anchor' ? '⚓ Mouillage' : '⛵ Navigation';
+  if (!confirm(`Basculer en mode ${label} ?`)) return;
+  try {
+    btn.textContent = '…';
+    const r = await fetch('/api/mode', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: next })
+    });
+    const data = await r.json();
+    if (data.ok) {
+      setModeBtn(next);
+    } else {
+      alert('Erreur : ' + (data.error || 'inconnue'));
+      setModeBtn(current);
+    }
+  } catch(e) {
+    alert('Erreur réseau');
+    setModeBtn(current);
+  }
+}
+
 // ── Init ──────────────────────────────────────────────────────────────────
+loadMode();
 fetchSailPrefs().then(() => refresh().then(scheduleRefresh));
 </script>
 <script>

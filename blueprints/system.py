@@ -279,3 +279,41 @@ def api_tracker_reset():
     conn.commit()
     conn.close()
     return jsonify({"success": True, "deleted": deleted, "message": f"{deleted} positions supprimées"})
+
+
+# =============================================================================
+# API : mode navigation / mouillage
+# =============================================================================
+
+@bp.route("/api/mode", methods=["GET"])
+@login_required
+def api_mode_get():
+    """Retourne le mode actuel (sailing ou anchor)."""
+    mode = os.environ.get("INREACH_MODE", "sailing").lower()
+    return jsonify({"mode": mode})
+
+
+@bp.route("/api/mode", methods=["POST"])
+@login_required
+def api_mode_set():
+    """Bascule entre sailing et anchor — met a jour .env."""
+    import re as _re
+    from pathlib import Path as _Path
+    data = request.get_json(silent=True) or {}
+    mode = data.get("mode", "").lower()
+    if mode not in ("sailing", "anchor"):
+        return jsonify({"error": "mode doit etre sailing ou anchor"}), 400
+
+    env_path = _Path(__file__).parent.parent / ".env"
+    try:
+        text = env_path.read_text()
+        if "INREACH_MODE=" in text:
+            text = _re.sub(r"INREACH_MODE=\S*", f"INREACH_MODE={mode}", text)
+        else:
+            text += f"\nINREACH_MODE={mode}\n"
+        env_path.write_text(text)
+        os.environ["INREACH_MODE"] = mode
+        logger.info("Mode bascule : %s", mode)
+        return jsonify({"ok": True, "mode": mode})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
