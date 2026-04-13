@@ -310,6 +310,7 @@ def init_db():
             boat_name TEXT NOT NULL DEFAULT 'Mon Bateau',
             boat_type TEXT DEFAULT 'sloop_croisiere',
             is_admin INTEGER DEFAULT 0,
+            telegram_chat_id TEXT,
             created_at TEXT DEFAULT (datetime('now')),
             last_login TEXT
         );
