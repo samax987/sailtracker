@@ -16,7 +16,7 @@ from flask import Blueprint, jsonify, make_response, render_template, request
 from flask_login import current_user, login_required
 
 from .shared import (
-    BASE_DIR, GRIB_CACHE_DIR, get_db, great_circle_waypoints, haversine_nm
+    BASE_DIR, GRIB_CACHE_DIR, get_db, get_route_owned, great_circle_waypoints, haversine_nm
 )
 
 bp = Blueprint("passage", __name__)
@@ -281,9 +281,10 @@ def api_gpx_parse():
 # =============================================================================
 
 @bp.route("/api/passage/<int:route_id>/info")
+@login_required
 def api_passage_info(route_id):
     conn = get_db()
-    row = conn.execute("SELECT * FROM passage_routes WHERE id=?", (route_id,)).fetchone()
+    row = get_route_owned(conn, route_id, current_user.id)
     if row is None:
         conn.close()
         return jsonify({"error": "Route non trouvée"}), 404
@@ -338,9 +339,10 @@ def api_passage_info(route_id):
 
 
 @bp.route("/api/passage/<int:route_id>/compute", methods=["POST"])
+@login_required
 def api_compute_passage(route_id):
     conn = get_db()
-    row = conn.execute("SELECT id,status FROM passage_routes WHERE id=?", (route_id,)).fetchone()
+    row = get_route_owned(conn, route_id, current_user.id, "id,status")
     if not row:
         conn.close()
         return jsonify({"error": "Route non trouvée"}), 404
@@ -368,11 +370,10 @@ def api_compute_passage(route_id):
 
 
 @bp.route("/api/passage/<int:route_id>/compute_status")
+@login_required
 def api_compute_status(route_id):
     conn = get_db()
-    row = conn.execute(
-        "SELECT status,last_computed FROM passage_routes WHERE id=?", (route_id,)
-    ).fetchone()
+    row = get_route_owned(conn, route_id, current_user.id, "status,last_computed")
     conn.close()
     if not row:
         return jsonify({"error": "Route non trouvée"}), 404
@@ -384,8 +385,12 @@ def api_compute_status(route_id):
 
 
 @bp.route("/api/passage/<int:route_id>/forecast")
+@login_required
 def api_passage_forecast(route_id):
     conn = get_db()
+    if not get_route_owned(conn, route_id, current_user.id, "id"):
+        conn.close()
+        return jsonify({"error": "Route non trouvée"}), 404
     last_row = conn.execute(
         "SELECT MAX(collected_at) as last FROM passage_forecasts WHERE route_id=?", (route_id,)
     ).fetchone()
@@ -426,8 +431,12 @@ def api_passage_forecast(route_id):
 
 
 @bp.route("/api/passage/<int:route_id>/departures")
+@login_required
 def api_passage_departures(route_id):
     conn = get_db()
+    if not get_route_owned(conn, route_id, current_user.id, "id"):
+        conn.close()
+        return jsonify({"error": "Route non trouvée"}), 404
     last_row = conn.execute(
         "SELECT MAX(computed_at) as last FROM departure_simulations WHERE route_id=?", (route_id,)
     ).fetchone()
@@ -466,9 +475,13 @@ def api_passage_departures(route_id):
 
 
 @bp.route("/api/passage/<int:route_id>/ensemble")
+@login_required
 def api_passage_ensemble(route_id):
     wp_idx = int(request.args.get('wp', 0))
     conn = get_db()
+    if not get_route_owned(conn, route_id, current_user.id, "id"):
+        conn.close()
+        return jsonify({"error": "Route non trouvée"}), 404
 
     last_row = conn.execute(
         "SELECT MAX(collected_at) as last FROM ensemble_forecasts WHERE route_id=? AND waypoint_index=?",
@@ -640,11 +653,12 @@ def api_passage_arrive(route_id):
 
 
 @bp.route("/api/passage/<int:route_id>/active-weather")
+@login_required
 def api_passage_active_weather(route_id):
     """Météo aux prochains waypoints pour une traversée active."""
     conn = get_db()
     try:
-        route_row = conn.execute("SELECT * FROM passage_routes WHERE id=?", (route_id,)).fetchone()
+        route_row = get_route_owned(conn, route_id, current_user.id)
         if not route_row:
             return jsonify({"error": "Route non trouvée"}), 404
 
@@ -718,11 +732,12 @@ def api_passage_active_weather(route_id):
 
 
 @bp.route("/api/passage/<int:route_id>/completed-summary")
+@login_required
 def api_passage_completed_summary(route_id):
     """Bilan d'une traversée complétée."""
     conn = get_db()
     try:
-        row = conn.execute("SELECT * FROM passage_routes WHERE id=?", (route_id,)).fetchone()
+        row = get_route_owned(conn, route_id, current_user.id)
         if not row:
             return jsonify({"error": "Route non trouvée"}), 404
 
@@ -767,6 +782,7 @@ def api_passage_completed_summary(route_id):
 # =============================================================================
 
 @bp.route("/api/passage/routes/<int:route_id>/optimize", methods=["POST"])
+@login_required
 def api_optimize_route(route_id):
     data = request.get_json() or {}
     departure_str = data.get("departure", "")
@@ -779,7 +795,7 @@ def api_optimize_route(route_id):
         return jsonify({"error": "Format departure invalide (ISO8601)"}), 400
 
     conn = get_db()
-    route = conn.execute("SELECT * FROM passage_routes WHERE id=?", (route_id,)).fetchone()
+    route = get_route_owned(conn, route_id, current_user.id)
     conn.close()
     if not route:
         return jsonify({"error": "Route introuvable"}), 404
@@ -836,6 +852,7 @@ def api_optimize_route(route_id):
 
 
 @bp.route("/api/passage/routes/<int:route_id>/optimize/status")
+@login_required
 def api_optimize_status(route_id):
     task_id = request.args.get("task_id", "")
     with _routing_tasks_lock:
@@ -846,6 +863,7 @@ def api_optimize_status(route_id):
 
 
 @bp.route("/api/passage/routes/<int:route_id>/optimize/result")
+@login_required
 def api_optimize_result(route_id):
     task_id = request.args.get("task_id", "")
     with _routing_tasks_lock:
@@ -858,6 +876,7 @@ def api_optimize_result(route_id):
 
 
 @bp.route("/api/passage/routes/<int:route_id>/move-waypoint", methods=["POST"])
+@login_required
 def api_move_waypoint(route_id):
     """Met à jour la position d'un waypoint (index dans le tableau JSON)."""
     data = request.get_json() or {}
@@ -874,7 +893,7 @@ def api_move_waypoint(route_id):
         return jsonify({"success": False, "error": "Valeurs invalides"}), 400
     conn = get_db()
     try:
-        row = conn.execute("SELECT waypoints FROM passage_routes WHERE id=?", (route_id,)).fetchone()
+        row = get_route_owned(conn, route_id, current_user.id, "waypoints")
         if not row:
             return jsonify({"success": False, "error": "Route non trouvée"}), 404
         wps = json.loads(row["waypoints"])
@@ -900,6 +919,7 @@ def api_move_waypoint(route_id):
 
 
 @bp.route("/api/passage/routes/<int:route_id>/rename", methods=["POST"])
+@login_required
 def api_rename_route(route_id):
     data = request.get_json() or {}
     new_name = data.get("name", "").strip()
@@ -909,7 +929,7 @@ def api_rename_route(route_id):
         return jsonify({"success": False, "error": "Nom trop long (max 100 caractères)"}), 400
     conn = get_db()
     try:
-        row = conn.execute("SELECT id FROM passage_routes WHERE id=?", (route_id,)).fetchone()
+        row = get_route_owned(conn, route_id, current_user.id, "id")
         if not row:
             return jsonify({"success": False, "error": "Route non trouvée"}), 404
         conn.execute("UPDATE passage_routes SET name=? WHERE id=?", (new_name, route_id))
@@ -922,10 +942,11 @@ def api_rename_route(route_id):
 
 
 @bp.route("/api/passage/routes/<int:route_id>/delete", methods=["POST"])
+@login_required
 def api_delete_route(route_id):
     conn = get_db()
     try:
-        row = conn.execute("SELECT id, name FROM passage_routes WHERE id=?", (route_id,)).fetchone()
+        row = get_route_owned(conn, route_id, current_user.id, "id, name")
         if not row:
             return jsonify({"success": False, "error": "Route non trouvée"}), 404
         conn.execute("DELETE FROM passage_forecasts WHERE route_id=?", (route_id,))
@@ -1019,7 +1040,7 @@ def api_passage_wind_grid():
     if route_id_param:
         try:
             conn = get_db()
-            row = conn.execute("SELECT waypoints FROM passage_routes WHERE id=?", (int(route_id_param),)).fetchone()
+            row = get_route_owned(conn, int(route_id_param), current_user.id, "waypoints")
             conn.close()
             if row:
                 wps = json.loads(row['waypoints'])
@@ -1040,7 +1061,7 @@ def api_passage_wind_grid():
     if route_id_param:
         try:
             _c = get_db()
-            _row = _c.execute("SELECT waypoints FROM passage_routes WHERE id=?", (int(route_id_param),)).fetchone()
+            _row = get_route_owned(_c, int(route_id_param), current_user.id, "waypoints")
             _c.close()
             wps_for_dist = json.loads(_row["waypoints"]) if _row else []
             route_dist_nm = sum(
@@ -1094,13 +1115,14 @@ def api_passage_wind_grid():
 # =============================================================================
 
 @bp.route("/api/passage/<int:route_id>/briefing")
+@login_required
 def api_passage_briefing(route_id):
     """Génère un briefing météo en langage marin pour la route."""
     from briefing import generate_weather_briefing, bearing as _bearing
 
     conn = get_db()
     try:
-        route_row = conn.execute("SELECT waypoints, boat_speed_avg_knots FROM passage_routes WHERE id=?", (route_id,)).fetchone()
+        route_row = get_route_owned(conn, route_id, current_user.id, "waypoints, boat_speed_avg_knots")
         if not route_row:
             return jsonify({"error": "Route non trouvée"}), 404
 
