@@ -671,7 +671,7 @@ const STALE_THRESHOLD_MIN  = 180;  // Données périmées
 // État global
 // =============================================================================
 let map, boatMarker, trackPolyline, seamapLayer;
-let myBoatName = 'POLLEN';
+let myBoatName = '';
 let myBoatType  = 'sloop_croisiere';
 const BOAT_TYPE_CFG = {
   sloop_croisiere:    { emoji: '⛵', glow: '#3b9eff' },
@@ -1086,6 +1086,7 @@ async function bootstrap() {
       const m = await _me.json();
       myBoatName = m.boat_name || myBoatName;
       myBoatType  = m.boat_type  || myBoatType;
+      document.querySelectorAll('#boat-name').forEach(el => el.textContent = myBoatName);
     }
   } catch(e) {}
 

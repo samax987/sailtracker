@@ -35,20 +35,22 @@ def api_health():
 @bp.route("/api/stats")
 @login_required
 def api_stats():
+    uid = current_user.id
     conn = get_db()
     row = conn.execute(
-        "SELECT COUNT(*) as total, MIN(timestamp) as first_ts, MAX(timestamp) as last_ts, MAX(speed_knots) as max_speed FROM positions"
+        "SELECT COUNT(*) as total, MIN(timestamp) as first_ts, MAX(timestamp) as last_ts, MAX(speed_knots) as max_speed FROM positions WHERE user_id=?",
+        (uid,)
     ).fetchone()
     if not row or not row["total"]:
         conn.close()
         return jsonify({"error": "Aucune donnée"}), 404
-    all_pos = conn.execute("SELECT latitude, longitude FROM positions ORDER BY timestamp ASC").fetchall()
+    all_pos = conn.execute("SELECT latitude, longitude FROM positions WHERE user_id=? ORDER BY timestamp ASC", (uid,)).fetchall()
     distance_nm = sum(
         haversine_nm(all_pos[i-1]["latitude"], all_pos[i-1]["longitude"],
                      all_pos[i]["latitude"], all_pos[i]["longitude"])
         for i in range(1, len(all_pos))
     )
-    avg_row = conn.execute("SELECT AVG(speed_knots) FROM positions WHERE speed_knots > 0.5").fetchone()
+    avg_row = conn.execute("SELECT AVG(speed_knots) FROM positions WHERE user_id=? AND speed_knots > 0.5", (uid,)).fetchone()
     conn.close()
     return jsonify({
         "distance_nm": round(distance_nm, 1),
@@ -111,10 +113,11 @@ def api_engine_status():
 @login_required
 def api_at_sea():
     """Détecte si le bateau est en navigation active sur une route connue."""
+    uid = current_user.id
     conn = get_db()
     pos = conn.execute(
-        "SELECT timestamp, latitude, longitude, speed_knots FROM positions WHERE source='inreach' ORDER BY timestamp DESC LIMIT 1"
-    ).fetchone()
+        "SELECT timestamp, latitude, longitude, speed_knots FROM positions WHERE user_id=? AND source='inreach' ORDER BY timestamp DESC LIMIT 1",
+        (uid,)).fetchone()
     if not pos:
         conn.close()
         return jsonify({"at_sea": False, "reason": "Aucune position InReach"})
@@ -162,8 +165,8 @@ def api_at_sea():
     dist_remaining = round(sum(haversine_nm(wps[i]["lat"], wps[i]["lon"], wps[i+1]["lat"], wps[i+1]["lon"]) for i in range(nearest_idx, len(wps)-1)) + min_wp_dist, 1)
 
     speeds_6h = conn.execute(
-        "SELECT speed_knots FROM positions WHERE source='inreach' AND speed_knots > 0 AND timestamp >= datetime('now','-6 hours')"
-    ).fetchall()
+        "SELECT speed_knots FROM positions WHERE user_id=? AND source='inreach' AND speed_knots > 0 AND timestamp >= datetime('now','-6 hours')",
+        (uid,)).fetchall()
     avg_speed = (sum(r["speed_knots"] for r in speeds_6h) / len(speeds_6h)) if speeds_6h else speed
 
     eta_str, hours_remaining = None, None

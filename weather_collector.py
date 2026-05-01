@@ -95,17 +95,33 @@ logger = setup_logging()
 # =============================================================================
 
 def get_latest_position() -> tuple[float, float] | None:
-    """Récupère la dernière position connue depuis SQLite."""
+    """Rétro-compatibilité — retourne la position la plus récente tous users."""
     conn = sqlite3.connect(DB_PATH, timeout=10)
     c = conn.cursor()
-    c.execute(
-        "SELECT latitude, longitude FROM positions ORDER BY timestamp DESC LIMIT 1"
-    )
+    c.execute("SELECT latitude, longitude FROM positions ORDER BY timestamp DESC LIMIT 1")
     row = c.fetchone()
     conn.close()
     if row:
         return float(row[0]), float(row[1])
     return None
+
+
+def get_all_user_positions() -> list[tuple[int, float, float, str]]:
+    """Retourne la dernière position de chaque utilisateur actif (user_id, lat, lon, username)."""
+    conn = sqlite3.connect(DB_PATH, timeout=10)
+    c = conn.cursor()
+    c.execute("""
+        SELECT p.user_id, p.latitude, p.longitude, u.username
+        FROM positions p
+        JOIN users u ON u.id = p.user_id
+        WHERE p.timestamp = (
+            SELECT MAX(p2.timestamp) FROM positions p2 WHERE p2.user_id = p.user_id
+        )
+        GROUP BY p.user_id
+    """)
+    rows = c.fetchall()
+    conn.close()
+    return [(int(r[0]), float(r[1]), float(r[2]), r[3]) for r in rows]
 
 
 def save_weather_snapshot(
@@ -415,19 +431,82 @@ def fetch_currents(lat: float, lon: float) -> dict | None:
 # Point d'entrée principal
 # =============================================================================
 
+def collect_for_position(lat: float, lon: float, label: str = "") -> None:
+    """Collecte météo complète pour une position donnée."""
+    logger.info("Collecte météo pour %s (%.4f°N, %.4f°E)", label or "position", lat, lon)
+
+    wind_current, wind_forecasts = None, []
+    try:
+        wind_current, wind_forecasts = fetch_wind(lat, lon)
+    except Exception as e:
+        logger.error("Échec collecte vent : %s", e)
+
+    wave_current, wave_forecasts = None, []
+    try:
+        wave_current, wave_forecasts = fetch_waves(lat, lon)
+    except Exception as e:
+        logger.error("Échec collecte vagues : %s", e)
+
+    currents = None
+    try:
+        currents = fetch_currents(lat, lon)
+    except Exception as e:
+        logger.error("Échec collecte courants : %s", e)
+
+    waves_full = None
+    if wave_current:
+        waves_full = {
+            "height_m": wave_current.get("height_m"),
+            "direction_deg": wave_current.get("direction_deg"),
+            "period_s": wave_current.get("period_s"),
+            "swell_height_m": wave_current.get("swell_height_m"),
+            "swell_direction_deg": wave_current.get("swell_direction_deg"),
+            "swell_period_s": wave_current.get("swell_period_s"),
+        }
+
+    try:
+        save_weather_snapshot(lat, lon, wind_current, waves_full, currents)
+    except Exception as e:
+        logger.error("Échec sauvegarde snapshot : %s", e)
+
+    collected_at = datetime.now(timezone.utc).isoformat()
+    if wind_forecasts:
+        try:
+            save_forecasts(collected_at, "wind", wind_forecasts)
+        except Exception as e:
+            logger.error("Échec sauvegarde prévisions vent : %s", e)
+    if wave_forecasts:
+        try:
+            save_forecasts(collected_at, "wave", wave_forecasts)
+        except Exception as e:
+            logger.error("Échec sauvegarde prévisions vagues : %s", e)
+
+
 def main() -> None:
     logger.info("=== Collecte météo/océan démarrée ===")
 
-    # 1. Récupérer la dernière position connue
-    position = get_latest_position()
-    if position is None:
-        logger.warning(
-            "Aucune position dans la base de données. "
-            "En attente de données AIS. Arrêt."
-        )
+    # Récupérer la position de chaque utilisateur actif
+    user_positions = get_all_user_positions()
+    if not user_positions:
+        logger.warning("Aucune position en base. Arrêt.")
         return
 
-    lat, lon = position
+    # Collecter pour chaque utilisateur (éviter doublons si même position ~1°)
+    seen = []
+    for user_id, lat, lon, username in user_positions:
+        # Skip si un autre user est très proche (< 1° ≈ 60 nm) — même météo
+        too_close = any(
+            abs(lat - s[0]) < 1.0 and abs(lon - s[1]) < 1.0
+            for s in seen
+        )
+        if too_close:
+            logger.info("Skip %s — position proche d'une collecte déjà faite", username)
+            continue
+        collect_for_position(lat, lon, label=username)
+        seen.append((lat, lon))
+
+    # Toujours collecter pour la position la plus récente (rétro-compat)
+    lat, lon = user_positions[0][1], user_positions[0][2]
     logger.info("Position actuelle : %.4f°N, %.4f°E", lat, lon)
 
     # 2. Collecter vent (Open-Meteo Weather)

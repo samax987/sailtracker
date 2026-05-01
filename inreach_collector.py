@@ -231,6 +231,10 @@ def collect_for_user(user_id: int, share_url: str, feed_password: str | None,
     d1_str = d1_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
     d2_str = datetime.now(timezone.utc).replace(tzinfo=None).strftime("%Y-%m-%dT%H:%M:%SZ")
 
+    # Normaliser l'URL : si c'est une URL de partage courte, la convertir en feed KML
+    if '/Feed/Share/' not in share_url:
+        parsed_tmp = urlparse(share_url)
+        share_url = urlunparse(parsed_tmp._replace(path='/Feed/Share' + parsed_tmp.path))
     parsed = urlparse(share_url)
     params = parse_qs(parsed.query)
     params["d1"] = [d1_str]
@@ -303,10 +307,7 @@ def collect_for_user(user_id: int, share_url: str, feed_password: str | None,
 # =============================================================================
 
 def main():
-    # Vérifier le mode navigation (sailing/anchor)
-    if os.getenv("INREACH_MODE", "sailing").lower() == "anchor":
-        logger.info("Mode ancre actif — collecte InReach suspendue")
-        return
+    anchor_mode = os.getenv("INREACH_MODE", "sailing").lower() == "anchor"
 
     conn = get_db()
     try:
@@ -321,6 +322,9 @@ def main():
 
     if not configs:
         # Rétro-compatibilité : lire l'URL depuis .env pour user_id=1
+        if anchor_mode:
+            logger.info("Mode ancre actif — collecte InReach suspendue (user_id=1)")
+            return
         url = os.getenv("INREACH_KML_URL", "")
         if url:
             logger.info("Pas de config DB, utilisation de INREACH_KML_URL (user_id=1)")
@@ -331,6 +335,10 @@ def main():
         return
 
     for cfg in configs:
+        # En mode ancre, on skip uniquement user_id=1 (POLLEN au mouillage)
+        if anchor_mode and cfg['user_id'] == 1:
+            logger.info("Mode ancre actif — skip collecte pour %s (user_id=1)", cfg['username'])
+            continue
         collect_for_user(
             user_id=cfg['user_id'],
             share_url=cfg['share_url'],

@@ -5,9 +5,9 @@ import json
 import logging
 
 from flask import Blueprint, jsonify
-from flask_login import login_required
+from flask_login import login_required, current_user
 
-from blueprints.shared import get_db, BASE_DIR
+from blueprints.shared import get_db, BASE_DIR, haversine_nm
 
 logger = logging.getLogger("sailtracker_server")
 
@@ -20,7 +20,26 @@ GRIB_CACHE_DIR = BASE_DIR / "static" / "grib_cache"
 @login_required
 def api_weather_latest():
     conn = get_db()
-    row = conn.execute("SELECT * FROM weather_snapshots ORDER BY collected_at DESC LIMIT 1").fetchone()
+    # Récupérer la dernière position du user connecté
+    pos = conn.execute(
+        "SELECT latitude, longitude FROM positions WHERE user_id=? ORDER BY timestamp DESC LIMIT 1",
+        (current_user.id,)
+    ).fetchone()
+
+    if pos:
+        # Chercher le snapshot météo le plus proche de la position du user
+        # parmi les snapshots des dernières 4h
+        candidates = conn.execute(
+            "SELECT * FROM weather_snapshots WHERE collected_at >= datetime('now', '-4 hours') ORDER BY collected_at DESC"
+        ).fetchall()
+        if candidates:
+            best = min(candidates, key=lambda r: haversine_nm(pos["latitude"], pos["longitude"], r["latitude"], r["longitude"]))
+            row = best
+        else:
+            row = conn.execute("SELECT * FROM weather_snapshots ORDER BY collected_at DESC LIMIT 1").fetchone()
+    else:
+        row = conn.execute("SELECT * FROM weather_snapshots ORDER BY collected_at DESC LIMIT 1").fetchone()
+
     conn.close()
     if row is None:
         return jsonify({"error": "Aucune donnée météo"}), 404

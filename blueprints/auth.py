@@ -3,6 +3,8 @@ blueprints/auth.py — Authentification : login, logout, register, profile, flee
 """
 import logging
 import os
+import random
+import string
 
 from flask import Blueprint, jsonify, redirect, render_template, request, url_for
 from flask_login import current_user, login_required, login_user, logout_user
@@ -67,8 +69,15 @@ def register_page():
         inreach_url = data.get("inreach_url", "").strip()
         invite_code = data.get("invite_code", "").strip()
 
-        if INVITE_CODE and invite_code != INVITE_CODE:
-            return render_template("register.html", error="Code d'invitation invalide.", templates=POLAR_TEMPLATES, invite_required=bool(INVITE_CODE))
+        # Vérifier le code dans la table invite_codes (usage unique)
+        conn_check = get_db()
+        code_row = conn_check.execute(
+            "SELECT id FROM invite_codes WHERE code=? AND used_by_user_id IS NULL",
+            (invite_code,)
+        ).fetchone()
+        conn_check.close()
+        if not code_row:
+            return render_template("register.html", error="Code d'invitation invalide ou déjà utilisé.", templates=POLAR_TEMPLATES, invite_required=True)
         if len(password) < 8:
             return render_template("register.html", error="Mot de passe trop court (8 car. min)", templates=POLAR_TEMPLATES, invite_required=bool(INVITE_CODE))
         if not username or not email:
@@ -90,6 +99,11 @@ def register_page():
                     "INSERT INTO polar_matrix (twa_deg, tws_kts, speed_kts, user_id) VALUES (?,?,?,?)",
                     [(r[0], r[1], r[2], user_id) for r in rows],
                 )
+            # Marquer le code d'invitation comme utilisé
+            conn.execute(
+                "UPDATE invite_codes SET used_by_user_id=? WHERE code=?",
+                (user_id, invite_code)
+            )
             conn.commit()
             from blueprints.shared import User
             user = User(user_id, username, email, boat_name, boat_type, False, None)
@@ -98,12 +112,12 @@ def register_page():
         except Exception as e:
             conn.rollback()
             if "UNIQUE" in str(e):
-                return render_template("register.html", error="Nom d'utilisateur ou email déjà utilisé", templates=POLAR_TEMPLATES, invite_required=bool(INVITE_CODE))
-            return render_template("register.html", error=str(e), templates=POLAR_TEMPLATES, invite_required=bool(INVITE_CODE))
+                return render_template("register.html", error="Nom d'utilisateur ou email déjà utilisé", templates=POLAR_TEMPLATES, invite_required=True)
+            return render_template("register.html", error=str(e), templates=POLAR_TEMPLATES, invite_required=True)
         finally:
             conn.close()
 
-    return render_template("register.html", templates=POLAR_TEMPLATES, invite_required=bool(INVITE_CODE))
+    return render_template("register.html", templates=POLAR_TEMPLATES, invite_required=True)
 
 
 @bp.route("/profile", methods=["GET", "POST"])
@@ -173,8 +187,90 @@ def fleet_page():
             AND p.timestamp = (SELECT MAX(p2.timestamp) FROM positions p2 WHERE p2.user_id=u.id)
         ORDER BY u.id
     """).fetchall()
+    users = conn.execute(
+        "SELECT id, username, email, is_admin, created_at, last_login FROM users ORDER BY id"
+    ).fetchall()
     conn.close()
-    return render_template("fleet.html", boats=[dict(b) for b in boats], current_user=current_user)
+    return render_template("fleet.html", boats=[dict(b) for b in boats],
+                           users=[dict(u) for u in users], current_user=current_user)
+
+
+@bp.route("/admin/users/<int:user_id>/delete", methods=["POST"])
+@login_required
+def delete_user(user_id):
+    """Supprime un compte utilisateur (admin uniquement, pas soi-même)."""
+    if not current_user.is_admin:
+        return redirect("/")
+    if user_id == current_user.id:
+        return redirect("/fleet")
+    conn = get_db()
+    conn.execute("DELETE FROM positions WHERE user_id=?", (user_id,))
+    conn.execute("DELETE FROM inreach_configs WHERE user_id=?", (user_id,))
+    conn.execute("DELETE FROM polar_matrix WHERE user_id=?", (user_id,))
+    conn.execute("UPDATE invite_codes SET used_by_user_id=NULL WHERE used_by_user_id=?", (user_id,))
+    conn.execute("DELETE FROM users WHERE id=?", (user_id,))
+    conn.commit()
+    conn.close()
+    return redirect("/fleet")
+
+
+@bp.route("/admin/users/<int:user_id>/reset-password", methods=["POST"])
+@login_required
+def reset_user_password(user_id):
+    """Réinitialise le mot de passe d'un user et retourne le nouveau en JSON."""
+    if not current_user.is_admin:
+        return jsonify({"error": "Non autorisé"}), 403
+    import random, string
+    new_pw = ''.join(random.choices(string.ascii_letters + string.digits, k=12))
+    conn = get_db()
+    conn.execute("UPDATE users SET password_hash=? WHERE id=?",
+                 (generate_password_hash(new_pw), user_id))
+    conn.commit()
+    conn.close()
+    return jsonify({"password": new_pw})
+
+
+
+@bp.route("/admin/invite-codes")
+@login_required
+def invite_codes_page():
+    """Page admin : liste des codes d'invitation."""
+    if not current_user.is_admin:
+        return redirect("/")
+    conn = get_db()
+    codes = conn.execute("""
+        SELECT ic.id, ic.code, ic.label, ic.created_at,
+               u.username as used_by_username
+        FROM invite_codes ic
+        LEFT JOIN users u ON u.id = ic.used_by_user_id
+        ORDER BY ic.created_at DESC
+    """).fetchall()
+    conn.close()
+    return render_template("invite_codes.html", codes=[dict(c) for c in codes])
+
+
+@bp.route("/admin/invite-codes/generate", methods=["POST"])
+@login_required
+def generate_invite_code():
+    """Génère un nouveau code d'invitation."""
+    if not current_user.is_admin:
+        return redirect("/")
+    label = request.form.get("label", "").strip() or "Sans label"
+    # Code 8 caractères : lettres majuscules + chiffres, préfixé SAIL
+    suffix = ''.join(random.choices(string.ascii_uppercase + string.digits, k=5))
+    code = f"SAIL{suffix}"
+    conn = get_db()
+    try:
+        conn.execute(
+            "INSERT INTO invite_codes (code, label) VALUES (?, ?)",
+            (code, label)
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+    finally:
+        conn.close()
+    return redirect("/admin/invite-codes")
 
 
 @bp.route("/api/set-sam-password", methods=["POST"])
