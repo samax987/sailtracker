@@ -680,13 +680,14 @@ def simulate_departure(route, departure_dt, forecasts_by_wp, polar=None):
 # Telegram
 # =============================================================================
 
-def send_telegram(message):
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+def send_telegram(message, chat_id=None):
+    target = chat_id or TELEGRAM_CHAT_ID
+    if not TELEGRAM_BOT_TOKEN or not target:
         return False
     try:
         resp = requests.post(
             f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
-            json={"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "HTML"},
+            json={"chat_id": target, "text": message, "parse_mode": "HTML"},
             timeout=15,
         )
         resp.raise_for_status()
@@ -772,49 +773,9 @@ def set_route_status(conn, route_id, status, last_computed=None):
 # Main
 # =============================================================================
 
-def main():
-    parser = argparse.ArgumentParser(description="SailTracker Passage Planner")
-    parser.add_argument("--route-id", type=int, default=None, dest="route_id",
-                        help="ID de la route à calculer (défaut: Cap-Vert → Barbade)")
-    args = parser.parse_args()
-
-    logger.info("=== Passage Planner démarré (route_id=%s) ===", args.route_id or "défaut")
-
-    conn = sqlite3.connect(DB_PATH, timeout=30)
-    conn.row_factory = sqlite3.Row
-
-    if args.route_id:
-        row = conn.execute("SELECT * FROM passage_routes WHERE id = ?", (args.route_id,)).fetchone()
-        if not row:
-            logger.error("Route ID=%d non trouvée en base", args.route_id)
-            conn.close()
-            return
-        route = {
-            "id": row["id"],
-            "name": row["name"],
-            "waypoints": json.loads(row["waypoints"]),
-            "boat_speed_avg_knots": row["boat_speed_avg_knots"],
-            "max_wind_knots": row["max_wind_knots"],
-            "max_wave_m": row["max_wave_m"],
-            "max_swell_m": row["max_swell_m"],
-        }
-        logger.info("Route chargée depuis DB : '%s'", route["name"])
-    else:
-        route_id = ensure_route(conn, ROUTE_CAPVERT_BARBADE)
-        route = dict(ROUTE_CAPVERT_BARBADE)
-        route["id"] = route_id
-
+def process_route(conn, route, owner_chat_id, polar):
+    """Calcule la fenêtre de départ et notifie le propriétaire si pertinent."""
     set_route_status(conn, route["id"], "computing")
-
-    # Chargement du diagramme polaire (si disponible)
-    polar = None
-    if _HAS_POLARS:
-        try:
-            polar = get_polar()
-            logger.info("Polaires POLLEN 1 chargées — simulation dynamique activée")
-        except Exception as e:
-            logger.warning("Impossible de charger les polaires : %s — vitesse fixe utilisée", e)
-
     try:
         logger.info("Collecte multi-modèles pour %d waypoints...", len(route["waypoints"]))
         collected_at = collect_forecasts_for_route(route, conn)
@@ -823,7 +784,6 @@ def main():
         forecasts_by_wp = load_forecasts_by_wp(conn, route["id"], collected_at)
 
         logger.info("Calcul du departure planner sur 15 jours (polaires=%s)...", polar is not None)
-        # Purge des simulations précédentes pour cette route (évite les doublons par run)
         conn.execute("DELETE FROM departure_simulations WHERE route_id=?", (route["id"],))
         conn.commit()
         now = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
@@ -854,25 +814,23 @@ def main():
                         sim.get("adjusted_eta_hours", 0), polar_info)
 
         conn.commit()
-
-        # Nettoyage
-        conn.execute("DELETE FROM departure_simulations WHERE computed_at < datetime('now', '-30 days')")
-        conn.execute("DELETE FROM passage_forecasts WHERE collected_at < datetime('now', '-7 days')")
-        conn.execute("DELETE FROM ensemble_forecasts WHERE collected_at < datetime('now', '-3 days')")
-        conn.commit()
-
         last_computed = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         set_route_status(conn, route["id"], "ready", last_computed)
 
         best = max(simulations, key=lambda s: s["overall_score"])
-        logger.info("Meilleure fenêtre : %s (score=%.0f)", best["departure_date"][:10], best["overall_score"])
+        logger.info("Route '%s' — meilleure fenêtre : %s (score=%.0f)",
+                    route["name"], best["departure_date"][:10], best["overall_score"])
 
-        if best["overall_score"] >= 70:
-            # Ne pas envoyer si le bateau est en mer (éviter le spam routes)
+        # Telegram envoyé uniquement si :
+        #  - score >= 70
+        #  - propriétaire a un chat_id (filtrage user déjà fait en amont)
+        #  - bateau pas en mer (évite spam pendant la nav)
+        if best["overall_score"] >= 70 and owner_chat_id:
             at_sea = False
             last_pos = conn.execute(
-                "SELECT timestamp, speed_knots FROM positions WHERE source='inreach' ORDER BY timestamp DESC LIMIT 1"
-            ).fetchone()
+                "SELECT timestamp, speed_knots FROM positions WHERE source='inreach' AND user_id=? ORDER BY timestamp DESC LIMIT 1",
+                (route.get("user_id"),)
+            ).fetchone() if route.get("user_id") else None
             if last_pos:
                 try:
                     ts = datetime.fromisoformat(last_pos["timestamp"].replace("Z", "+00:00"))
@@ -882,17 +840,84 @@ def main():
                     spd = last_pos["speed_knots"] or 0
                     if age_min < 360 and spd >= 1.5:
                         at_sea = True
-                        logger.info("Bateau en mer (spd=%.1f kts, pos il y a %.0f min) — Telegram route ignoré", spd, age_min)
+                        logger.info("Bateau en mer (spd=%.1f kts) — Telegram route ignoré", spd)
                 except Exception:
                     pass
             if not at_sea:
                 msg = build_telegram_message(route, best)
-                if send_telegram(msg):
-                    logger.info("Alerte Telegram envoyée !")
-
+                if send_telegram(msg, chat_id=owner_chat_id):
+                    logger.info("Alerte Telegram envoyée → chat_id=%s", owner_chat_id)
     except Exception as e:
-        logger.error("Erreur lors du calcul : %s", e, exc_info=True)
+        logger.error("Erreur sur route '%s' : %s", route.get("name"), e, exc_info=True)
         set_route_status(conn, route["id"], "error")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="SailTracker Passage Planner")
+    parser.add_argument("--route-id", type=int, default=None, dest="route_id",
+                        help="ID de la route à calculer (sinon: toutes les routes phase=planning)")
+    args = parser.parse_args()
+
+    logger.info("=== Passage Planner démarré (route_id=%s) ===", args.route_id or "all-planning")
+
+    conn = sqlite3.connect(DB_PATH, timeout=30)
+    conn.row_factory = sqlite3.Row
+
+    # Liste des routes à traiter : --route-id forcé OU toutes les routes phase='planning'
+    if args.route_id:
+        rows = conn.execute(
+            "SELECT * FROM passage_routes WHERE id = ?", (args.route_id,)
+        ).fetchall()
+        if not rows:
+            logger.error("Route ID=%d non trouvée en base", args.route_id)
+            conn.close()
+            return
+    else:
+        rows = conn.execute(
+            "SELECT * FROM passage_routes WHERE phase='planning' AND COALESCE(status,'')<>'archived' AND user_id IS NOT NULL"
+        ).fetchall()
+        if not rows:
+            logger.info("Aucune route en phase 'planning' à calculer — fin.")
+            conn.close()
+            return
+        logger.info("%d route(s) phase=planning à calculer", len(rows))
+
+    # Chargement polaires une seule fois
+    polar = None
+    if _HAS_POLARS:
+        try:
+            polar = get_polar()
+            logger.info("Polaires POLLEN 1 chargées — simulation dynamique activée")
+        except Exception as e:
+            logger.warning("Impossible de charger les polaires : %s", e)
+
+    for row in rows:
+        route = {
+            "id": row["id"],
+            "name": row["name"],
+            "waypoints": json.loads(row["waypoints"]),
+            "boat_speed_avg_knots": row["boat_speed_avg_knots"],
+            "max_wind_knots": row["max_wind_knots"],
+            "max_wave_m": row["max_wave_m"],
+            "max_swell_m": row["max_swell_m"],
+            "user_id": row["user_id"] if "user_id" in row.keys() else None,
+        }
+        # Récupère chat_id du propriétaire — évite tout envoi multi-user croisé
+        owner_chat_id = None
+        if route["user_id"]:
+            u = conn.execute(
+                "SELECT telegram_chat_id FROM users WHERE id=?", (route["user_id"],)
+            ).fetchone()
+            if u and u["telegram_chat_id"]:
+                owner_chat_id = u["telegram_chat_id"]
+        process_route(conn, route, owner_chat_id, polar)
+
+    # Nettoyage global (une seule fois)
+    try:
+        conn.execute("DELETE FROM departure_simulations WHERE computed_at < datetime('now', '-30 days')")
+        conn.execute("DELETE FROM passage_forecasts WHERE collected_at < datetime('now', '-7 days')")
+        conn.execute("DELETE FROM ensemble_forecasts WHERE collected_at < datetime('now', '-3 days')")
+        conn.commit()
     finally:
         conn.close()
 

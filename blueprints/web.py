@@ -3,7 +3,7 @@ blueprints/web.py — Pages web principales (HTML) de SailTracker.
 """
 import math
 from flask import Blueprint, render_template, send_from_directory, request
-from flask_login import login_required
+from flask_login import login_required, current_user
 
 from .shared import (
     get_db, haversine_nm, STATIC_DIR,
@@ -265,4 +265,19 @@ def accuracy_page():
 @bp.route('/analysis')
 @login_required
 def analysis_page():
-    return render_template('analysis.html')
+    # Liste des traversées (active + completed) de l utilisateur connecté
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            """SELECT id, name, phase, departure_port, arrival_port,
+                          actual_departure, actual_arrival
+                   FROM passage_routes
+                   WHERE user_id = ?
+                     AND phase IN ('active', 'completed')
+                   ORDER BY COALESCE(actual_departure, created_at) DESC""",
+            (current_user.id,)
+        ).fetchall()
+        routes = [dict(r) for r in rows]
+    finally:
+        conn.close()
+    return render_template('analysis.html', routes=routes)

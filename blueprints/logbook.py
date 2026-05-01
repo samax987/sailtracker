@@ -12,9 +12,17 @@ bp = Blueprint("logbook", __name__)
 # =============================================================================
 
 @bp.route("/api/logbook/<int:route_id>", methods=["GET"])
+@login_required
 def api_logbook_list(route_id):
     conn = get_db()
     try:
+        # Vérifie ownership de la route avant de retourner ses entrées
+        owner = conn.execute(
+            "SELECT user_id FROM passage_routes WHERE id=?", (route_id,)
+        ).fetchone()
+        if not owner or owner["user_id"] != current_user.id:
+            return jsonify({"error": "Route non trouvée"}), 404
+
         entry_type = request.args.get("type")
         limit = min(int(request.args.get("limit", 100)), 500)
         query = "SELECT * FROM logbook_entries WHERE route_id=?"
@@ -31,11 +39,15 @@ def api_logbook_list(route_id):
 
 
 @bp.route("/api/logbook/<int:route_id>", methods=["POST"])
+@login_required
 def api_logbook_add(route_id):
     data = request.get_json() or {}
     conn = get_db()
     try:
-        if not conn.execute("SELECT id FROM passage_routes WHERE id=?", (route_id,)).fetchone():
+        owner = conn.execute(
+            "SELECT user_id FROM passage_routes WHERE id=?", (route_id,)
+        ).fetchone()
+        if not owner or owner["user_id"] != current_user.id:
             return jsonify({"error": "Route non trouvée"}), 404
         text = data.get("text", "")[:2000]
         entry_type = data.get("entry_type", "note")
@@ -69,10 +81,14 @@ def api_logbook_add(route_id):
 
 
 @bp.route("/api/logbook/entry/<int:entry_id>", methods=["DELETE"])
+@login_required
 def api_logbook_delete(entry_id):
     conn = get_db()
     try:
-        row = conn.execute("SELECT id FROM logbook_entries WHERE id=?", (entry_id,)).fetchone()
+        row = conn.execute(
+            "SELECT id FROM logbook_entries WHERE id=? AND user_id=?",
+            (entry_id, current_user.id)
+        ).fetchone()
         if not row:
             return jsonify({"error": "Entrée non trouvée"}), 404
         conn.execute("DELETE FROM logbook_entries WHERE id=?", (entry_id,))
@@ -83,11 +99,15 @@ def api_logbook_delete(entry_id):
 
 
 @bp.route("/api/logbook/entry/<int:entry_id>", methods=["PUT"])
+@login_required
 def api_logbook_update(entry_id):
     data = request.get_json() or {}
     conn = get_db()
     try:
-        row = conn.execute("SELECT id FROM logbook_entries WHERE id=?", (entry_id,)).fetchone()
+        row = conn.execute(
+            "SELECT id FROM logbook_entries WHERE id=? AND user_id=?",
+            (entry_id, current_user.id)
+        ).fetchone()
         if not row:
             return jsonify({"error": "Entrée non trouvée"}), 404
         text = data.get("text", "")[:2000]

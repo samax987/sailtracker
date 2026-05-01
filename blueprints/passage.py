@@ -567,12 +567,16 @@ def api_passage_ensemble(route_id):
 # =============================================================================
 
 @bp.route("/api/passage/<int:route_id>/start", methods=["POST"])
+@login_required
 def api_passage_start(route_id):
-    """Démarre une traversée : phase planning → active."""
+    """Démarre une traversée : phase planning → active. Filtré par user."""
     data = request.get_json() or {}
     conn = get_db()
     try:
-        row = conn.execute("SELECT id, phase FROM passage_routes WHERE id=?", (route_id,)).fetchone()
+        row = conn.execute(
+            "SELECT id, phase FROM passage_routes WHERE id=? AND user_id=?",
+            (route_id, current_user.id)
+        ).fetchone()
         if not row:
             return jsonify({"error": "Route non trouvée"}), 404
         if row["phase"] != "planning":
@@ -593,12 +597,16 @@ def api_passage_start(route_id):
 
 
 @bp.route("/api/passage/<int:route_id>/arrive", methods=["POST"])
+@login_required
 def api_passage_arrive(route_id):
-    """Enregistre l'arrivée : phase active → completed."""
+    """Enregistre l'arrivée : phase active → completed. Filtré par user."""
     data = request.get_json() or {}
     conn = get_db()
     try:
-        row = conn.execute("SELECT id, phase, actual_departure FROM passage_routes WHERE id=?", (route_id,)).fetchone()
+        row = conn.execute(
+            "SELECT id, phase, actual_departure FROM passage_routes WHERE id=? AND user_id=?",
+            (route_id, current_user.id)
+        ).fetchone()
         if not row:
             return jsonify({"error": "Route non trouvée"}), 404
         if row["phase"] != "active":
@@ -1167,12 +1175,19 @@ def api_passage_briefing(route_id):
 # API : Passage summary (page lite)
 # =============================================================================
 
-def build_passage_summary():
-    """Construit le résumé de passage pour la page lite."""
+def build_passage_summary(user_id=None):
+    """Construit le résumé de passage pour la page lite, filtré par user."""
     conn = get_db()
     try:
+        if user_id is None:
+            return None
+        # Priorise une traversée active, sinon dernière route 'ready' planning du user
         route_row = conn.execute(
-            "SELECT id, name, boat_speed_avg_knots FROM passage_routes WHERE status='ready' ORDER BY id LIMIT 1"
+            """SELECT id, name, boat_speed_avg_knots FROM passage_routes
+               WHERE user_id=? AND status='ready' AND COALESCE(status,'')<>'archived'
+                 AND phase IN ('planning','active')
+               ORDER BY (phase='active') DESC, id DESC LIMIT 1""",
+            (user_id,)
         ).fetchone()
         if not route_row:
             return None
@@ -1306,7 +1321,7 @@ def build_passage_summary():
 @bp.route("/api/passage/summary")
 @login_required
 def api_passage_summary():
-    data = build_passage_summary()
+    data = build_passage_summary(user_id=current_user.id)
     if not data:
         return jsonify({"error": "Pas de données disponibles"}), 404
     resp_data = json.dumps(data, ensure_ascii=False)
@@ -1319,5 +1334,5 @@ def api_passage_summary():
 @bp.route("/passage/lite")
 @login_required
 def passage_lite():
-    data = build_passage_summary()
+    data = build_passage_summary(user_id=current_user.id)
     return render_template('passage_lite.html', data=data)

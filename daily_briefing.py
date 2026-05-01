@@ -35,14 +35,15 @@ logging.basicConfig(
 logger = logging.getLogger("daily_briefing")
 
 
-def send_telegram(text: str) -> bool:
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        logger.warning("Telegram non configuré")
+def send_telegram(text: str, chat_id: str = "") -> bool:
+    target = chat_id or TELEGRAM_CHAT_ID
+    if not TELEGRAM_BOT_TOKEN or not target:
+        logger.warning("Telegram non configuré (token ou chat_id manquant)")
         return False
     try:
         resp = requests.post(
             f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
-            json={"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML"},
+            json={"chat_id": target, "text": text, "parse_mode": "HTML"},
             timeout=15,
         )
         resp.raise_for_status()
@@ -142,16 +143,20 @@ def get_at_sea_status(conn):
     }
 
 
-def get_departure_summary(conn):
-    """Meilleure fenêtre de départ parmi toutes les routes."""
+def get_departure_summary(conn, user_id):
+    """Meilleure fenêtre de départ parmi les routes phase='planning' d'un user."""
     row = conn.execute(
         """SELECT ds.departure_date, ds.confidence_score, ds.comfort_score, ds.overall_score,
                   ds.alerts, ds.summary, pr.name as route_name
            FROM departure_simulations ds
            JOIN passage_routes pr ON ds.route_id = pr.id
            WHERE ds.computed_at >= datetime('now', '-12 hours')
+             AND pr.user_id = ?
+             AND pr.phase = 'planning'
+             AND COALESCE(pr.status,'') <> 'archived'
            ORDER BY ds.overall_score DESC
-           LIMIT 1"""
+           LIMIT 1""",
+        (user_id,)
     ).fetchone()
     if not row:
         return None
@@ -400,36 +405,44 @@ def build_active_passage_message(status, wx, forecast_days=None):
 
 
 def main():
-    logger.info("=== Résumé Telegram quotidien ===")
+    logger.info("=== Résumé Telegram quotidien (multi-user, planning seulement) ===")
 
     conn = sqlite3.connect(DB_PATH, timeout=10)
     conn.row_factory = sqlite3.Row
 
+    # Météo globale partagée par tous les users
     wx = get_weather_summary(conn)
 
-    # Priorité : traversée active > mode en mer (vitesse) > pré-départ
-    active = get_active_passage(conn)
-    if active:
-        logger.info("Mode ACTIVE détecté — route %s, jour %s", active["route_name"], active.get("day_num"))
-        forecast_days = get_3day_forecast(active["lat"], active["lon"])
-        msg = build_active_passage_message(active, wx, forecast_days)
-    else:
-        at_sea = get_at_sea_status(conn)
-        if at_sea:
-            logger.info("Mode EN MER détecté — route %s, %d%% fait", at_sea["route_name"], at_sea["progress_pct"])
-            forecast_days = get_3day_forecast(at_sea["lat"], at_sea["lon"])
-            msg = build_at_sea_message(at_sea, wx, forecast_days)
-        else:
-            departure = get_departure_summary(conn)
-            logger.info("Mode PRÉ-DÉPART — meilleure fenêtre : %s", departure["departure_date"] if departure else "aucune")
-            msg = build_pre_departure_message(departure, wx)
+    # Cible : users avec un chat_id ET au moins une route phase='planning' active (non archivée)
+    users = conn.execute(
+        """SELECT DISTINCT u.id, u.username, u.telegram_chat_id
+           FROM users u
+           JOIN passage_routes pr ON pr.user_id = u.id
+           WHERE u.telegram_chat_id IS NOT NULL
+             AND u.telegram_chat_id <> ''
+             AND pr.phase = 'planning'
+             AND COALESCE(pr.status,'') <> 'archived'"""
+    ).fetchall()
+
+    if not users:
+        logger.info("Aucun user avec route en phase=planning et chat Telegram — rien à envoyer")
+        conn.close()
+        return
+
+    sent = 0
+    for u in users:
+        departure = get_departure_summary(conn, u["id"])
+        if not departure:
+            logger.info("User %s : pas de simulation récente — skip", u["username"])
+            continue
+        logger.info("User %s — route '%s' fenêtre %s",
+                    u["username"], departure["route_name"], departure["departure_date"])
+        msg = build_pre_departure_message(departure, wx)
+        if send_telegram(msg, chat_id=u["telegram_chat_id"]):
+            sent += 1
 
     conn.close()
-
-    if send_telegram(msg):
-        logger.info("Résumé Telegram envoyé")
-    else:
-        logger.error("Échec envoi Telegram")
+    logger.info("Résumé Telegram terminé (%d envoyé(s))", sent)
 
 
 if __name__ == "__main__":
