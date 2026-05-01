@@ -11,7 +11,7 @@ from datetime import datetime, timezone, timedelta
 from flask import Blueprint, jsonify, request
 from flask_login import login_required, current_user
 
-from blueprints.shared import get_db, haversine_nm, minutes_ago, BASE_DIR
+from blueprints.shared import get_db, haversine_nm, minutes_ago, BASE_DIR, compute_at_sea_status
 
 logger = logging.getLogger("sailtracker_server")
 
@@ -113,92 +113,26 @@ def api_engine_status():
 @login_required
 def api_at_sea():
     """Détecte si le bateau est en navigation active sur une route connue."""
-    uid = current_user.id
     conn = get_db()
-    pos = conn.execute(
-        "SELECT timestamp, latitude, longitude, speed_knots FROM positions WHERE user_id=? AND source='inreach' ORDER BY timestamp DESC LIMIT 1",
-        (uid,)).fetchone()
-    if not pos:
+    try:
+        status = compute_at_sea_status(conn, current_user.id)
+        if not status:
+            # Diagnostic minimal pour rétrocompatibilité (pas de raison détaillée)
+            return jsonify({"at_sea": False, "reason": "Bateau au mouillage ou hors route"})
+
+        wx = conn.execute(
+            "SELECT wind_speed_kmh, wind_direction_deg, wave_height_m FROM weather_snapshots ORDER BY collected_at DESC LIMIT 1"
+        ).fetchone()
+        weather_summary = None
+        if wx:
+            weather_summary = {
+                "wind_knots": round((wx["wind_speed_kmh"] or 0) / 1.852, 1),
+                "wind_dir": wx["wind_direction_deg"],
+                "wave_m": wx["wave_height_m"],
+            }
+        return jsonify({"at_sea": True, **status, "weather": weather_summary})
+    finally:
         conn.close()
-        return jsonify({"at_sea": False, "reason": "Aucune position InReach"})
-
-    age_min = minutes_ago(pos["timestamp"])
-    if age_min is None or age_min > 120:
-        conn.close()
-        return jsonify({"at_sea": False, "reason": f"Position trop ancienne ({age_min} min)", "age_min": age_min})
-
-    speed = pos["speed_knots"] or 0
-    if speed < 1.0:
-        conn.close()
-        return jsonify({"at_sea": False, "reason": f"Vitesse trop faible ({speed:.1f} kts)", "speed_knots": speed})
-
-    lat, lon = float(pos["latitude"]), float(pos["longitude"])
-    routes = conn.execute("SELECT id, name, waypoints FROM passage_routes WHERE status='ready'").fetchall()
-    best_route = None
-    best_dist = 999.0
-    for r in routes:
-        try:
-            wps = json.loads(r["waypoints"])
-            for wp in wps:
-                d = haversine_nm(lat, lon, wp["lat"], wp["lon"])
-                if d < best_dist:
-                    best_dist = d
-                    best_route = r
-        except Exception:
-            pass
-
-    if not best_route or best_dist > 50:
-        conn.close()
-        return jsonify({"at_sea": False, "reason": f"Position trop loin d'une route connue ({best_dist:.0f} NM)"})
-
-    wps = json.loads(best_route["waypoints"])
-    nearest_idx, min_wp_dist = 0, 999.0
-    for i, wp in enumerate(wps):
-        d = haversine_nm(lat, lon, wp["lat"], wp["lon"])
-        if d < min_wp_dist:
-            min_wp_dist = d
-            nearest_idx = i
-
-    total_dist = sum(haversine_nm(wps[i]["lat"], wps[i]["lon"], wps[i+1]["lat"], wps[i+1]["lon"]) for i in range(len(wps)-1))
-    dist_covered = sum(haversine_nm(wps[i]["lat"], wps[i]["lon"], wps[i+1]["lat"], wps[i+1]["lon"]) for i in range(nearest_idx))
-    progress_pct = round(dist_covered / total_dist * 100) if total_dist > 0 else 0
-    dist_remaining = round(sum(haversine_nm(wps[i]["lat"], wps[i]["lon"], wps[i+1]["lat"], wps[i+1]["lon"]) for i in range(nearest_idx, len(wps)-1)) + min_wp_dist, 1)
-
-    speeds_6h = conn.execute(
-        "SELECT speed_knots FROM positions WHERE user_id=? AND source='inreach' AND speed_knots > 0 AND timestamp >= datetime('now','-6 hours')",
-        (uid,)).fetchall()
-    avg_speed = (sum(r["speed_knots"] for r in speeds_6h) / len(speeds_6h)) if speeds_6h else speed
-
-    eta_str, hours_remaining = None, None
-    if avg_speed > 0:
-        hours_remaining = round(dist_remaining / avg_speed, 1)
-        eta_str = (datetime.now(timezone.utc) + timedelta(hours=hours_remaining)).strftime("%d/%m %Hh%M UTC")
-
-    wx = conn.execute(
-        "SELECT wind_speed_kmh, wind_direction_deg, wave_height_m FROM weather_snapshots ORDER BY collected_at DESC LIMIT 1"
-    ).fetchone()
-    weather_summary = None
-    if wx:
-        weather_summary = {
-            "wind_knots": round((wx["wind_speed_kmh"] or 0) / 1.852, 1),
-            "wind_dir": wx["wind_direction_deg"],
-            "wave_m": wx["wave_height_m"],
-        }
-    conn.close()
-
-    return jsonify({
-        "at_sea": True,
-        "route_id": best_route["id"],
-        "route_name": best_route["name"],
-        "progress_pct": progress_pct,
-        "distance_remaining_nm": dist_remaining,
-        "eta": eta_str,
-        "hours_remaining": hours_remaining,
-        "actual_speed_knots": round(avg_speed, 1),
-        "position": {"lat": lat, "lon": lon},
-        "position_age_min": age_min,
-        "weather": weather_summary,
-    })
 
 
 @bp.route("/api/me")
