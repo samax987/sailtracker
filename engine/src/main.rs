@@ -2,6 +2,7 @@ use clap::{Parser, Subcommand};
 use std::io::{self, Read};
 
 mod ensemble;
+mod landmask;
 mod geo;
 mod optimize;
 mod polar;

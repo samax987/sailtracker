@@ -80,31 +80,10 @@ pub struct OptimizedRoute {
     pub waypoints: Vec<RouteWaypoint>,
 }
 
-// ─── Détection des terres (bounding boxes) ───────────────────────────────────
+// ─── Détection des terres ────────────────────────────────────────────────────
+// Implémentation : voir landmask.rs (Natural Earth 10m + R-tree + point-in-polygon).
 
-/// (lat_min, lat_max, lon_min, lon_max)
-const LAND_BOXES: &[(f64, f64, f64, f64)] = &[
-    // Îles Canaries
-    (27.5, 29.5, -18.5, -13.0),
-    // Madère
-    (32.5, 33.5, -17.5, -16.0),
-    // Açores
-    (36.5, 40.0, -32.0, -24.5),
-    // Petites Antilles (Guadeloupe, Martinique, St-Lucie…) – limite est -60.5° pour exclure Barbade
-    (10.0, 19.0, -63.5, -60.5),
-    // Grandes Antilles (Cuba, Haïti, Porto Rico…)
-    (15.0, 22.0, -74.0, -60.0),
-    // Côte africaine
-    (0.0, 35.0, -18.0, -12.0),
-    // Brésil NE
-    (-5.0, 8.0, -50.0, -34.0),
-];
-
-fn is_on_land(lat: f64, lon: f64) -> bool {
-    LAND_BOXES
-        .iter()
-        .any(|&(la, lb, lo_a, lo_b)| lat >= la && lat <= lb && lon >= lo_a && lon <= lo_b)
-}
+use crate::landmask::{crosses_land_buffered, is_on_land};
 
 // ─── Structures internes ──────────────────────────────────────────────────────
 
@@ -188,7 +167,14 @@ pub fn isochrone_optimize(
 
     // Max 30 jours
     let max_steps = ((30.0 * 24.0) / time_step) as usize;
-    let arrival_radius_nm = 50.0_f64;
+    // Rayon d'arrivée adaptatif : 20% de la distance directe, borné [2.0, 50.0] NM.
+    // Évite que des routes courtes ne s'arrêtent sur le 1er saut, sans pour autant
+    // surcontraindre les routes locales où trop d'isos rendent le snap final impossible.
+    let arrival_radius_nm = (direct_dist * 0.20).clamp(2.0, 50.0);
+    // Buffer côtier : ignorer les `coastal_buffer_nm` derniers/premiers NM du segment
+    // de snap. Permet l'arrivée vers un mouillage proche d'une île (endpoint peut être
+    // marqué "on land" selon la résolution Natural Earth 10m).
+    let coastal_buffer_nm: f64 = 0.5;
     let max_front_size = 1000usize;
 
     // ÉTAPE 2 — Propagation
@@ -277,6 +263,10 @@ pub fn isochrone_optimize(
                             destination_point(fp.lat, fp.lon, hdg, dist_moved);
 
                         // Filtres : terre, limites géographiques
+                        // Note : on ne teste que le point d'arrivée du segment (pas le segment entier)
+                        // pour des raisons de perf. Avec un step <= 0.25h et ~5kt, le segment fait <2 NM
+                        // et le risque qu'il traverse une côte sans que le point arrivée soit terrestre
+                        // est faible. Le check segment complet n'est utilisé que pour le snap final.
                         if is_on_land(new_lat, new_lon) {
                             continue;
                         }
@@ -311,9 +301,20 @@ pub fn isochrone_optimize(
             .filter(|pt| pt.dist_to_end < arrival_radius_nm)
             .collect();
 
-        if !arrivals.is_empty() {
+        // Filtrer les arrivées dont le snap final (candidat -> end) traverse la terre,
+        // sinon le dernier segment risque de traverser une île.
+        // On exempte un buffer côtier autour de end (mouillage proche d'une île).
+        let valid_arrivals: Vec<&FrontPoint> = arrivals
+            .iter()
+            .filter(|pt| {
+                !crosses_land_buffered(pt.lat, pt.lon, end_lat, end_lon, coastal_buffer_nm)
+            })
+            .copied()
+            .collect();
+
+        if !valid_arrivals.is_empty() {
             // Meilleur candidat d'arrivée = celui avec le temps total le plus court
-            let best_arr = arrivals
+            let best_arr = valid_arrivals
                 .iter()
                 .min_by(|a, b| {
                     let snap_speed = speed_fallback.max(0.5);
