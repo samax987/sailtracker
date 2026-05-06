@@ -312,7 +312,8 @@
     <button class="btn" id="btn-start-passage" style="display:none;padding:4px 10px;font-size:0.75rem;background:rgba(74,222,128,0.12);border-color:rgba(74,222,128,0.35);color:#4ade80" title="Démarrer la traversée">&#x2693; Partir</button>
     <button class="btn" id="btn-arrive" style="display:none;padding:4px 10px;font-size:0.75rem;background:rgba(251,191,36,0.12);border-color:rgba(251,191,36,0.35);color:#fbbf24" title="Enregistrer l'arrivée">&#x1F3C1; Arrivée</button>
     <button class="btn danger" id="btn-delete-route" style="padding:4px 10px;font-size:0.75rem" title="Supprimer la route sélectionnée">&#x1F5D1; Supprimer</button>
-    <button class="btn" id="btn-optimize" style="padding:4px 10px;font-size:0.75rem;background:rgba(74,222,128,0.12);border-color:rgba(74,222,128,0.35);color:#4ade80" title="Routage isochrones — calcule la route optimale selon le vent prévu et les polaires">&#x26A1; Optimiser</button>
+    <button class="btn" id="btn-analyze" style="padding:4px 10px;font-size:0.75rem;background:rgba(74,222,128,0.12);border-color:rgba(74,222,128,0.35);color:#4ade80" title="Analyse segment par segment de votre route : TWA, allure, vitesse polaire, ETA, alertes">&#x1F9ED; Estimer ma route</button>
+    <button class="btn" id="btn-optimize" style="padding:4px 10px;font-size:0.75rem;background:rgba(96,165,250,0.10);border-color:rgba(96,165,250,0.30);color:#60a5fa" title="Routage isochrones — propose une route théorique optimisée par l'algorithme (à vérifier visuellement)">&#x26A1; Route théorique</button>
     <a href="/" class="btn">&#x2190; Carte</a>
     <a href="/accuracy" class="btn" style="font-size:0.75rem">&#x1F4CA; Modèles</a>
     <a href="/passage/lite" class="btn" style="font-size:0.75rem">&#x1F4E1; Lite</a>
@@ -355,6 +356,36 @@
     </label>
     <button class="btn" onclick="clearOptimize()" style="padding:3px 8px;font-size:0.7rem">&#x2715; Effacer</button>
   </div>
+</div>
+
+<!-- ── Modal Estimer ma route ── -->
+<div id="modal-analyze" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:1000;align-items:center;justify-content:center">
+  <div style="background:#1a2744;border:1px solid #2d4a7a;border-radius:12px;padding:24px;min-width:340px;max-width:460px">
+    <h3 style="font-size:0.95rem;margin-bottom:16px;color:#7dd3fc">&#x1F9ED; Estimer ma route</h3>
+    <p style="font-size:0.78rem;color:#94a3b8;margin-bottom:14px">Analyse segment par segment de votre tracé : pour chaque segment, calcule TWA, allure, vitesse polaire POLLEN 1, durée et alertes (vent fort/faible, près serré, vent arrière instable, traverse terre).</p>
+    <label style="font-size:0.76rem;color:#94a3b8">Date/heure de départ (UTC)</label>
+    <input type="datetime-local" id="ana-departure"
+      style="width:100%;margin:6px 0 16px;background:#243458;border:1px solid #2d4a7a;color:#e2e8f0;border-radius:6px;padding:7px 10px;font-size:0.85rem">
+    <div id="ana-error" style="display:none;font-size:0.76rem;color:#f87171;margin-bottom:12px"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn" onclick="closeAnalyzeModal()">Annuler</button>
+      <button class="btn" id="ana-btn-run" onclick="runAnalyze()"
+        style="background:rgba(74,222,128,0.15);border-color:rgba(74,222,128,0.4);color:#4ade80">&#x25B6; Analyser</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Panneau résultat estimation ── -->
+<div id="analyze-result-panel" style="display:none;background:#1a2744;border:1px solid #2d4a7a;border-top:2px solid #4ade80;padding:10px 16px;font-size:0.78rem">
+  <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:8px">
+    <span style="color:#4ade80;font-weight:700">&#x1F9ED; Estimation de votre route</span>
+    <span>Distance : <b id="ana-dist">—</b> NM</span>
+    <span>Durée : <b id="ana-dur">—</b>h</span>
+    <span>Vitesse moy. : <b id="ana-avg">—</b> kt</span>
+    <span>ETA : <b id="ana-eta">—</b></span>
+    <button class="btn" onclick="clearAnalyze()" style="padding:3px 8px;font-size:0.7rem;margin-left:auto">&#x2715; Effacer</button>
+  </div>
+  <div id="ana-segments" style="display:flex;flex-direction:column;gap:4px;max-height:240px;overflow-y:auto"></div>
 </div>
 
 <!-- ── Barre de statut calcul ── -->
@@ -2099,12 +2130,140 @@ async function fetchEngineStatus() {
 fetchEngineStatus();
 setInterval(fetchEngineStatus, 60000);
 
-  // Bouton Optimiser
+  // Bouton Optimiser (route théorique)
   const btnOptimize = document.getElementById('btn-optimize');
   if (btnOptimize) btnOptimize.addEventListener('click', openOptimizeModal);
+
+  // Bouton Estimer ma route (analyse segment par segment)
+  const btnAnalyze = document.getElementById('btn-analyze');
+  if (btnAnalyze) btnAnalyze.addEventListener('click', openAnalyzeModal);
 }
 
 bootstrap();
+
+// =============================================================================
+// Estimer ma route (analyse segment par segment, synchrone)
+// =============================================================================
+let analyzeSegMarkers = [];
+
+function openAnalyzeModal() {
+  if (!routeId) { alert("Sélectionnez une route d'abord."); return; }
+  const now = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  const val = `${now.getUTCFullYear()}-${pad(now.getUTCMonth()+1)}-${pad(now.getUTCDate())}T${pad(now.getUTCHours())}:${pad(now.getUTCMinutes())}`;
+  document.getElementById('ana-departure').value = val;
+  document.getElementById('ana-error').style.display = 'none';
+  document.getElementById('ana-btn-run').disabled = false;
+  document.getElementById('modal-analyze').style.display = 'flex';
+}
+
+function closeAnalyzeModal() {
+  document.getElementById('modal-analyze').style.display = 'none';
+}
+
+function showAnaError(msg) {
+  const e = document.getElementById('ana-error');
+  e.textContent = msg; e.style.display = 'block';
+  document.getElementById('ana-btn-run').disabled = false;
+}
+
+async function runAnalyze() {
+  const depVal = document.getElementById('ana-departure').value;
+  if (!depVal) { showAnaError('Sélectionnez une date de départ.'); return; }
+  const depISO = new Date(depVal + ':00Z').toISOString();
+  document.getElementById('ana-btn-run').disabled = true;
+  document.getElementById('ana-error').style.display = 'none';
+  try {
+    const resp = await fetch(`/api/passage/routes/${routeId}/analyze`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({departure: depISO})
+    });
+    const data = await resp.json();
+    if (!resp.ok) { showAnaError(data.error || 'Erreur serveur'); return; }
+    closeAnalyzeModal();
+    displayAnalyzeResult(data);
+  } catch (e) {
+    showAnaError('Erreur réseau : ' + e.message);
+  }
+}
+
+// Couleur d'allure (vert = idéal, jaune = OK, orange = inconfort, rouge = impossible)
+function allureColor(allure, warnings) {
+  if (warnings && warnings.includes('près_irréalisable')) return '#f87171';
+  if (warnings && warnings.includes('traverse_terre')) return '#f87171';
+  if (warnings && warnings.includes('vent_arrière_instable')) return '#fb923c';
+  if (warnings && warnings.includes('près_très_serré')) return '#fb923c';
+  if (warnings && warnings.includes('vent_fort')) return '#fb923c';
+  if (warnings && warnings.includes('vent_faible')) return '#fbbf24';
+  // Allures confortables
+  if (allure === 'travers' || allure === 'largue' || allure === 'grand largue') return '#4ade80';
+  if (allure === 'près travers') return '#86efac';
+  return '#cbd5e1';
+}
+
+function displayAnalyzeResult(result) {
+  clearAnalyze();
+  const total = result.total || {};
+  document.getElementById('ana-dist').textContent = (total.distance_nm ?? '—');
+  document.getElementById('ana-dur').textContent = (total.duration_h ?? '—');
+  document.getElementById('ana-avg').textContent = (total.avg_speed_kts ?? '—');
+  if (total.eta) {
+    const eta = new Date(total.eta);
+    document.getElementById('ana-eta').textContent = eta.toUTCString().slice(5, 22) + ' UTC';
+  } else {
+    document.getElementById('ana-eta').textContent = '⚠ segment irréalisable';
+  }
+
+  const container = document.getElementById('ana-segments');
+  container.innerHTML = '';
+  (result.segments || []).forEach((s, i) => {
+    const color = allureColor(s.allure, s.warnings);
+    const dur = (s.duration_h == null) ? '∞' : (s.duration_h.toFixed(2) + 'h');
+    const bs = (s.boat_speed_kts == null) ? '—' : s.boat_speed_kts.toFixed(1);
+    const warns = (s.warnings && s.warnings.length)
+      ? s.warnings.map(w => `<span style="color:#fb923c;margin-left:6px">⚠ ${w.replace(/_/g, ' ')}</span>`).join('')
+      : '';
+    const row = document.createElement('div');
+    row.style.cssText = `display:flex;align-items:center;gap:10px;padding:5px 8px;background:rgba(255,255,255,0.03);border-left:3px solid ${color};border-radius:3px;font-size:0.76rem;flex-wrap:wrap`;
+    row.innerHTML = `
+      <b style="color:${color};min-width:40px">Seg ${i+1}</b>
+      <span>${s.dist_nm.toFixed(1)} NM</span>
+      <span style="color:#94a3b8">cap ${s.brg.toFixed(0)}°</span>
+      <span style="color:#94a3b8">vent ${s.twd.toFixed(0)}° / ${s.tws.toFixed(1)} kt</span>
+      <span style="color:${color}">TWA ${s.twa.toFixed(0)}° · ${s.allure}</span>
+      <span><b>${bs}</b> kt × ${dur}</span>
+      ${warns}
+    `;
+    container.appendChild(row);
+
+    // Marqueur cap au midpoint pour visualiser sur la carte
+    if (typeof L !== 'undefined' && map) {
+      const midLat = (s.from[0] + s.to[0]) / 2;
+      const midLon = (s.from[1] + s.to[1]) / 2;
+      const m = L.circleMarker([midLat, midLon], {
+        radius: 5, color: color, fillColor: color, fillOpacity: 0.7, weight: 2
+      }).bindTooltip(
+        `Seg ${i+1} : ${s.dist_nm.toFixed(1)} NM<br>` +
+        `Vent ${s.twd.toFixed(0)}° / ${s.tws.toFixed(1)} kt<br>` +
+        `TWA ${s.twa.toFixed(0)}° (${s.allure})<br>` +
+        `<b>${bs} kt</b> × ${dur}` +
+        (s.warnings && s.warnings.length ? `<br>⚠ ${s.warnings.join(', ')}` : ''),
+        { sticky: true }
+      );
+      m.addTo(map);
+      analyzeSegMarkers.push(m);
+    }
+  });
+
+  document.getElementById('analyze-result-panel').style.display = 'block';
+}
+
+function clearAnalyze() {
+  analyzeSegMarkers.forEach(m => map.removeLayer(m));
+  analyzeSegMarkers = [];
+  document.getElementById('analyze-result-panel').style.display = 'none';
+}
 
 // =============================================================================
 // Routage isochrones

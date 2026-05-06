@@ -23,8 +23,85 @@ bp = Blueprint("passage", __name__)
 logger = logging.getLogger("sailtracker_server")
 
 # État partagé pour les tâches de routage isochrones
-_routing_tasks: dict = {}
-_routing_tasks_lock = threading.Lock()
+# Tasks de routing : persistées en SQLite pour être visibles depuis tous les workers
+# gunicorn (le dict mémoire ne fonctionnait qu'avec 1 worker, sinon 404 aléatoire).
+_TASKS_TABLE_INITIALIZED = False
+_routing_tasks_lock = threading.Lock()  # lock local pour la création de table
+
+
+def _ensure_routing_tasks_table(conn):
+    global _TASKS_TABLE_INITIALIZED
+    if _TASKS_TABLE_INITIALIZED:
+        return
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS routing_tasks (
+            task_id TEXT PRIMARY KEY,
+            status TEXT NOT NULL,
+            progress INTEGER DEFAULT 0,
+            error TEXT,
+            result_json TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )"""
+    )
+    # Purge des tasks de plus de 1h pour éviter que la table grossisse indéfiniment
+    conn.execute(
+        "DELETE FROM routing_tasks WHERE created_at < datetime('now', '-1 hour')"
+    )
+    conn.commit()
+    _TASKS_TABLE_INITIALIZED = True
+
+
+def _routing_task_create(task_id: str) -> None:
+    conn = get_db()
+    try:
+        _ensure_routing_tasks_table(conn)
+        conn.execute(
+            "INSERT INTO routing_tasks (task_id, status, progress) VALUES (?, 'computing', 0)",
+            (task_id,),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _routing_task_set_done(task_id: str, result: dict) -> None:
+    conn = get_db()
+    try:
+        _ensure_routing_tasks_table(conn)
+        conn.execute(
+            "UPDATE routing_tasks SET status='done', progress=100, result_json=?, updated_at=CURRENT_TIMESTAMP WHERE task_id=?",
+            (json.dumps(result), task_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _routing_task_set_error(task_id: str, err: str) -> None:
+    conn = get_db()
+    try:
+        _ensure_routing_tasks_table(conn)
+        conn.execute(
+            "UPDATE routing_tasks SET status='error', error=?, updated_at=CURRENT_TIMESTAMP WHERE task_id=?",
+            (err, task_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _routing_task_get(task_id: str):
+    conn = get_db()
+    try:
+        _ensure_routing_tasks_table(conn)
+        row = conn.execute(
+            "SELECT status, progress, error, result_json FROM routing_tasks WHERE task_id=?",
+            (task_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    return row
 
 # Instance GribWindProvider (chargée à la demande)
 _wind_provider = None
@@ -777,6 +854,53 @@ def api_passage_completed_summary(route_id):
         conn.close()
 
 
+
+
+# =============================================================================
+# API : Estimation d'une route manuelle (analyse segment par segment)
+# =============================================================================
+
+@bp.route("/api/passage/routes/<int:route_id>/analyze", methods=["POST"])
+@login_required
+def api_analyze_route(route_id):
+    """Analyse les waypoints saisis : TWA, allure, vitesse polaire, ETA, warnings.
+    Pas d'optimisation — utilise EXACTEMENT les waypoints fournis par l'utilisateur."""
+    data = request.get_json() or {}
+    departure_str = data.get("departure", "")
+    try:
+        if departure_str:
+            departure_dt = datetime.fromisoformat(departure_str.replace("Z", "+00:00"))
+        else:
+            departure_dt = datetime.now(timezone.utc)
+    except Exception:
+        return jsonify({"error": "Format departure invalide (ISO8601)"}), 400
+
+    conn = get_db()
+    route = get_route_owned(conn, route_id, current_user.id)
+    conn.close()
+    if not route:
+        return jsonify({"error": "Route introuvable"}), 404
+
+    try:
+        waypoints = json.loads(route["waypoints"])
+    except Exception:
+        return jsonify({"error": "Waypoints invalides"}), 400
+
+    if len(waypoints) < 2:
+        return jsonify({"error": "La route doit avoir au moins 2 waypoints"}), 400
+
+    from polars import get_polar
+    from routing import analyze_route
+    polar = get_polar(str(BASE_DIR / "sailtracker.db"))
+    wind_prov = _get_wind_provider()
+
+    try:
+        result = analyze_route(waypoints, departure_dt, polar, wind_prov)
+    except Exception as e:
+        return jsonify({"error": f"Analyse échouée : {e}"}), 500
+
+    return jsonify(result)
+
 # =============================================================================
 # API : Routage isochrones
 # =============================================================================
@@ -809,8 +933,7 @@ def api_optimize_route(route_id):
         return jsonify({"error": "La route doit avoir au moins 2 waypoints"}), 400
 
     task_id = str(uuid.uuid4())
-    with _routing_tasks_lock:
-        _routing_tasks[task_id] = {"status": "computing", "progress": 0, "result": None, "error": None}
+    _routing_task_create(task_id)
 
     def _do_routing():
         from polars import get_polar
@@ -837,15 +960,10 @@ def api_optimize_route(route_id):
             )
             db2.commit()
             db2.close()
-            with _routing_tasks_lock:
-                _routing_tasks[task_id]["status"] = "done"
-                _routing_tasks[task_id]["result"] = result
-                _routing_tasks[task_id]["progress"] = 100
+            _routing_task_set_done(task_id, result)
         except Exception as ex:
             logger.error("Erreur routage tache %s: %s", task_id, ex)
-            with _routing_tasks_lock:
-                _routing_tasks[task_id]["status"] = "error"
-                _routing_tasks[task_id]["error"] = str(ex)
+            _routing_task_set_error(task_id, str(ex))
 
     threading.Thread(target=run_routing, daemon=True).start()
     return jsonify({"task_id": task_id, "status": "computing"})
@@ -855,24 +973,22 @@ def api_optimize_route(route_id):
 @login_required
 def api_optimize_status(route_id):
     task_id = request.args.get("task_id", "")
-    with _routing_tasks_lock:
-        task = _routing_tasks.get(task_id)
-    if not task:
+    row = _routing_task_get(task_id)
+    if not row:
         return jsonify({"error": "Tâche inconnue"}), 404
-    return jsonify({"status": task["status"], "progress": task["progress"], "error": task.get("error")})
+    return jsonify({"status": row["status"], "progress": row["progress"], "error": row["error"]})
 
 
 @bp.route("/api/passage/routes/<int:route_id>/optimize/result")
 @login_required
 def api_optimize_result(route_id):
     task_id = request.args.get("task_id", "")
-    with _routing_tasks_lock:
-        task = _routing_tasks.get(task_id)
-    if not task:
+    row = _routing_task_get(task_id)
+    if not row:
         return jsonify({"error": "Tâche inconnue"}), 404
-    if task["status"] != "done":
-        return jsonify({"error": f"Calcul en cours ({task['status']})"}), 202
-    return jsonify(task["result"])
+    if row["status"] != "done":
+        return jsonify({"error": f"Calcul en cours ({row['status']})"}), 202
+    return jsonify(json.loads(row["result_json"]))
 
 
 @bp.route("/api/passage/routes/<int:route_id>/move-waypoint", methods=["POST"])

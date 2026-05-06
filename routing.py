@@ -223,6 +223,14 @@ class GribWindProvider:
 
 
 # =============================================================================
+# Détection terre (partage le dataset Natural Earth avec le moteur Rust)
+try:
+    import landmask  # type: ignore
+except ImportError:
+    landmask = None  # détection terre désactivée si module manquant
+
+
+# =============================================================================
 # Algorithme isochrones
 # =============================================================================
 
@@ -233,11 +241,11 @@ def isochrone_routing(
     polar,
     wind_provider: GribWindProvider,
     time_step_h: float = 2.0,
-    angle_step: int = 5,
+    angle_step: int = 3,
     max_steps: int = 200,
     arrival_radius_nm: float = 25.0,
-    max_points_per_front: int = 200,
-    cell_deg: float = 0.5,
+    max_points_per_front: int = 400,
+    cell_deg: float = 0.3,
 ) -> dict:
     """
     Routage par isochrones.
@@ -258,6 +266,16 @@ def isochrone_routing(
     direct_dist = haversine_nm(lat_s, lon_s, lat_e, lon_e)
     direct_bearing = bearing(lat_s, lon_s, lat_e, lon_e)
 
+    # time_step_h adaptatif : routes courtes = pas plus fin pour ne pas sauter
+    # par-dessus une île étroite (Saint-Martin ~7 NM). On vise ~2.5 NM par segment.
+    if direct_dist < 60.0:
+        time_step_h = max(0.5, min(time_step_h, direct_dist / 30.0))
+        max_steps = max(max_steps, int(direct_dist * 4.0 / time_step_h) + 20)
+
+    # arrival_radius_nm adaptatif : doit être bien plus petit que direct_dist sinon
+    # le départ lui-même est dans le radius et l'algo s'arrête au step 1 sans explorer.
+    arrival_radius_nm = max(2.0, min(arrival_radius_nm, direct_dist * 0.3))
+
     # Structure d'un point du front
     # { lat, lon, parent, step, hdg, speed_kts, twa, tws, dist_from_start }
     def make_point(lat, lon, parent, step, hdg, speed, twa, tws):
@@ -273,8 +291,19 @@ def isochrone_routing(
     origin = make_point(lat_s, lon_s, None, 0, 0, 0, 0, 0)
     front = [origin]
     all_isochrones = []
+    # Cellules déjà visitées : empêche le yo-yo (un point qui retourne à une zone
+    # déjà explorée n'apporte aucune info nouvelle, donc on l'élimine).
+    # Tolérance : on autorise la revisite après N steps (louvoyage légitime).
+    visited_cell_deg = 0.03  # ~1.8 NM
+    revisit_tolerance = 8    # nombre de steps avant de pouvoir revisiter une cellule
+    visited_cells = {}  # {cell: step_de_derniere_visite}
+    def _vc(pt):
+        return (int(pt["lat"] / visited_cell_deg), int(pt["lon"] / visited_cell_deg))
+    visited_cells[_vc(origin)] = 0
     best_arrival = None
     best_dist_remaining = direct_dist
+    best_arrival_time_h = float("inf")
+    arrival_found_step = None  # pour le look-ahead
 
     angles = list(range(0, 360, angle_step))
 
@@ -301,7 +330,9 @@ def isochrone_routing(
             twa_arr = np.where(twa_arr > 180, 360 - twa_arr, twa_arr)
             speeds = polar.get_boat_speeds_batch(twa_arr, tws)
 
-            valid_mask = speeds >= 0.5
+            # Filtrer aussi le près serré impossible (TWA<30° : la polaire interpole
+            # bêtement vers 0 mais aucun voilier ne peut remonter à <30° du vent).
+            valid_mask = (speeds >= 0.5) & (twa_arr >= 30.0)
             if not np.any(valid_mask):
                 continue
 
@@ -324,6 +355,15 @@ def isochrone_routing(
 
             for i in range(len(valid_hdgs)):
                 lat1, lon1 = float(lats1[i]), float(lons1[i])
+                # Filtre terre : rejeter les candidats qui tombent sur une masse terrestre
+                if landmask is not None and landmask.is_on_land(lat1, lon1):
+                    continue
+                # Empêcher de sauter par-dessus une île : segment parent→candidat
+                # ne doit pas traverser de terre (buffer 0 ici, buffer côtier au snap final)
+                if landmask is not None and landmask.crosses_land_buffered(
+                    lat0, lon0, lat1, lon1, buffer_nm=0.0
+                ):
+                    continue
                 hdg = float(valid_hdgs[i])
                 bs = float(valid_speeds[i])
                 twa = float(valid_twa[i])
@@ -332,23 +372,59 @@ def isochrone_routing(
 
                 d_end = haversine_nm(lat1, lon1, lat_e, lon_e)
                 if d_end < arrival_radius_nm:
-                    if best_arrival is None or d_end < best_dist_remaining:
+                    # Snap final : ne valider l'arrivée que si le segment vers end ne traverse pas la terre
+                    # (buffer côtier 0.5 NM pour permettre les mouillages proches d'une île)
+                    if landmask is not None and landmask.crosses_land_buffered(
+                        lat1, lon1, lat_e, lon_e, buffer_nm=0.5
+                    ):
+                        continue
+                    # Vitesse du snap final = polaire au TWA réel du segment final.
+                    # Sinon l'algo croit pouvoir arriver à la vitesse du dernier step, alors qu'au près
+                    # serré c'est impossible ("moment contre le vent" inacceptable à la voile).
+                    snap_brg = bearing(lat1, lon1, lat_e, lon_e)
+                    snap_twa = abs((twd - snap_brg + 360) % 360)
+                    if snap_twa > 180:
+                        snap_twa = 360 - snap_twa
+                    # Refuser le snap si trop près du vent (impossible à la voile).
+                    if snap_twa < 30.0:
+                        continue
+                    snap_speed = polar.get_boat_speed(snap_twa, tws)
+                    if snap_speed < 1.0:
+                        continue
+                    # Critère = temps total d'arrivée (step + snap final), pas juste distance.
+                    arrival_time_h = step * time_step_h + d_end / snap_speed
+                    if best_arrival is None or arrival_time_h < best_arrival_time_h:
                         best_arrival = new_pt
                         best_dist_remaining = d_end
+                        best_arrival_time_h = arrival_time_h
 
         if not new_points:
             break
 
         # Pruning par secteur angulaire autour de l'axe start→end
         pruned = _prune_front(new_points, lat_e, lon_e, cell_deg, max_points_per_front)
+        # Filtrer les retours en arrière (cellule visitée récemment) — autorise
+        # le louvoyage légitime après revisit_tolerance steps.
+        def _allow(p):
+            c = _vc(p)
+            last = visited_cells.get(c)
+            return last is None or (step - last) >= revisit_tolerance
+        pruned = [p for p in pruned if _allow(p)]
+        for p in pruned:
+            visited_cells[_vc(p)] = step
         front = pruned
 
         # Stocker l'isochrone
         iso = [[p["lat"], p["lon"]] for p in front]
         all_isochrones.append(iso)
 
+        # Look-ahead : on continue 1 step de plus après la première arrivée
+        # pour comparer plusieurs points d'arrivée potentiels.
         if best_arrival is not None:
-            break
+            if arrival_found_step is None:
+                arrival_found_step = step
+            elif step >= arrival_found_step + 1:
+                break
 
         # Si on dépasse la limite de steps sans arrivée, prendre le point le plus proche
         if step == max_steps:
@@ -361,7 +437,16 @@ def isochrone_routing(
     if best_arrival is not None:
         dist_remaining = haversine_nm(best_arrival["lat"], best_arrival["lon"], lat_e, lon_e)
         if dist_remaining > 0.1:
-            final_speed = best_arrival["speed"] if best_arrival["speed"] > 0.5 else 6.0
+            # Vitesse réelle du segment final selon TWA (polaire), pas vitesse du dernier step
+            t_arrival = departure_dt + timedelta(hours=best_arrival["step"] * time_step_h)
+            twd_f, tws_f = wind_provider.get_wind(t_arrival, best_arrival["lat"], best_arrival["lon"])
+            brg_f = bearing(best_arrival["lat"], best_arrival["lon"], lat_e, lon_e)
+            twa_f = abs((twd_f - brg_f + 360) % 360)
+            if twa_f > 180:
+                twa_f = 360 - twa_f
+            final_speed = polar.get_boat_speed(twa_f, tws_f)
+            if final_speed < 1.0:
+                final_speed = best_arrival["speed"] if best_arrival["speed"] > 0.5 else 6.0
             extra_h = dist_remaining / final_speed
 
     waypoints = _backtrack(best_arrival, departure_dt, time_step_h,
@@ -529,3 +614,182 @@ def build_wind_grid_for_rust(
     )
     return slots
 
+
+
+# =============================================================================
+# Analyze route : estimation segment par segment d'une route MANUELLE.
+# Pas d'isochrone, juste un calcul direct sur les waypoints fournis.
+# Utilise la polaire calibrée pour la vitesse, le vent GRIB, et le landmask.
+# =============================================================================
+
+
+def _allure_from_twa(twa: float) -> str:
+    """Nom français de l'allure depuis le TWA (0-180)."""
+    if twa < 30:
+        return "irréalisable"
+    if twa < 45:
+        return "près serré"
+    if twa < 60:
+        return "près"
+    if twa < 80:
+        return "près travers"
+    if twa < 110:
+        return "travers"
+    if twa < 145:
+        return "largue"
+    if twa < 165:
+        return "grand largue"
+    return "vent arrière"
+
+
+def analyze_route(
+    waypoints: list,
+    departure_dt: datetime,
+    polar,
+    wind_provider: GribWindProvider,
+) -> dict:
+    """
+    Analyse segment par segment d'une route manuelle.
+
+    Args:
+        waypoints: liste de (lat, lon) ou de dict {lat, lon}
+        departure_dt: datetime UTC de départ
+        polar: polaire calibrée
+        wind_provider: GribWindProvider
+
+    Returns:
+        {
+          "segments": [{from, to, dist_nm, brg, twd, tws, twa, allure,
+                        boat_speed_kts, duration_h, eta_start, eta_end, warnings}, ...],
+          "total": {distance_nm, duration_h, eta, avg_speed_kts, departure}
+        }
+    """
+    if departure_dt.tzinfo is None:
+        departure_dt = departure_dt.replace(tzinfo=timezone.utc)
+
+    # Normaliser : accepter dicts ou tuples
+    pts = []
+    for wp in waypoints:
+        if isinstance(wp, dict):
+            pts.append((float(wp["lat"]), float(wp["lon"])))
+        else:
+            pts.append((float(wp[0]), float(wp[1])))
+
+    if len(pts) < 2:
+        return {
+            "segments": [],
+            "total": {"distance_nm": 0.0, "duration_h": 0.0,
+                      "eta": departure_dt.isoformat(),
+                      "avg_speed_kts": 0.0,
+                      "departure": departure_dt.isoformat()},
+        }
+
+    # Tente d'importer landmask pour les warnings côte (best-effort)
+    try:
+        import landmask as _lm
+    except Exception:
+        _lm = None
+
+    segments = []
+    t_cursor = departure_dt
+    total_dist = 0.0
+
+    for i in range(len(pts) - 1):
+        lat1, lon1 = pts[i]
+        lat2, lon2 = pts[i + 1]
+        dist_nm = haversine_nm(lat1, lon1, lat2, lon2)
+        brg = bearing(lat1, lon1, lat2, lon2)
+
+        # Vent : on prend au midpoint à mi-temps estimé.
+        # On fait deux passes : 1) estimer durée avec vent au point de départ,
+        # 2) recalculer au midpoint à mi-durée.
+        twd0, tws0 = wind_provider.get_wind(t_cursor, lat1, lon1)
+        twa0 = abs((twd0 - brg + 360) % 360)
+        if twa0 > 180:
+            twa0 = 360 - twa0
+        bs0 = polar.get_boat_speed(twa0, tws0) if twa0 >= 30.0 else 0.0
+        rough_dur_h = dist_nm / bs0 if bs0 > 0.5 else dist_nm / 4.0
+
+        t_mid = t_cursor + timedelta(hours=rough_dur_h / 2)
+        mid_lat = (lat1 + lat2) / 2
+        mid_lon = (lon1 + lon2) / 2
+        twd, tws = wind_provider.get_wind(t_mid, mid_lat, mid_lon)
+        twa = abs((twd - brg + 360) % 360)
+        if twa > 180:
+            twa = 360 - twa
+
+        # Vitesse polaire au TWA réel. Si TWA<30°, irréalisable à la voile.
+        if twa >= 30.0:
+            bs = polar.get_boat_speed(twa, tws)
+        else:
+            bs = 0.0
+
+        # Si vraiment irréalisable (près trop serré ou vent < 2kt), durée infinie.
+        if bs < 0.5 or tws < 2.0:
+            duration_h = float("inf")
+            eta_end = None
+        else:
+            duration_h = dist_nm / bs
+            eta_end = t_cursor + timedelta(hours=duration_h)
+
+        warnings = []
+        if twa < 30.0:
+            warnings.append("près_irréalisable")
+        elif twa < 40.0:
+            warnings.append("près_très_serré")
+        if twa > 165.0:
+            warnings.append("vent_arrière_instable")
+        if tws > 25.0:
+            warnings.append("vent_fort")
+        if tws < 4.0:
+            warnings.append("vent_faible")
+        # Frôle la côte (segment traverse terre selon landmask, buffer 0)
+        if _lm is not None:
+            try:
+                if _lm.crosses_land_buffered(lat1, lon1, lat2, lon2, buffer_nm=0.0):
+                    warnings.append("traverse_terre")
+            except Exception:
+                pass
+
+        seg = {
+            "from": [round(lat1, 5), round(lon1, 5)],
+            "to": [round(lat2, 5), round(lon2, 5)],
+            "dist_nm": round(dist_nm, 2),
+            "brg": round(brg, 0),
+            "twd": round(twd, 0),
+            "tws": round(tws, 1),
+            "twa": round(twa, 0),
+            "allure": _allure_from_twa(twa),
+            "boat_speed_kts": round(bs, 2),
+            "duration_h": round(duration_h, 2) if duration_h != float("inf") else None,
+            "eta_start": t_cursor.isoformat(),
+            "eta_end": eta_end.isoformat() if eta_end else None,
+            "warnings": warnings,
+        }
+        segments.append(seg)
+
+        total_dist += dist_nm
+        if eta_end:
+            t_cursor = eta_end
+        else:
+            # Si segment irréalisable, on continue quand même mais ETA totale invalide
+            t_cursor = t_cursor + timedelta(hours=24)
+
+    # Total
+    total_duration_h = sum(
+        s["duration_h"] for s in segments if s["duration_h"] is not None
+    )
+    has_unrealisable = any(s["duration_h"] is None for s in segments)
+    avg_speed = total_dist / total_duration_h if total_duration_h > 0 else 0.0
+
+    return {
+        "segments": segments,
+        "total": {
+            "distance_nm": round(total_dist, 2),
+            "duration_h": round(total_duration_h, 2),
+            "eta": t_cursor.isoformat() if not has_unrealisable else None,
+            "avg_speed_kts": round(avg_speed, 2),
+            "departure": departure_dt.isoformat(),
+            "has_unrealisable_segment": has_unrealisable,
+        },
+    }
