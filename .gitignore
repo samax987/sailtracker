@@ -33,4 +33,4 @@ data/polars/pollen1.csv
 .idea/
 .vscode/
 engine/target/
-*.bak
+*.bak*
